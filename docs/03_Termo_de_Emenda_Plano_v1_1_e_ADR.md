@@ -1,0 +1,21 @@
+# Termo de Emenda Formal do Plano Diretor (Plano v1.1 / v1.2 — Fase 01)
+
+> **Propósito (Condição Bloqueante `B4` / Achado `M-01`):** Este documento emenda formalmente o [Plano de Projeto original (`implementation_plan.md`)](../README.md) aprovado no início do projeto, alinhando 100% das decisões arquiteturais, estatísticas e metodológicas às duas rodadas de Auditoria Científica da Fase 01. Qualquer divergência entre o `implementation_plan.md` inicial e este Termo de Emenda (e os documentos `01_Metodologia...md` e `02_Plano_Validacao_Estatistica.md`) resolve-se em favor deste Termo de Emenda.
+
+---
+
+## 1. Registro de Emendas e Decisões Arquiteturais (*Change Log* de Auditoria)
+
+| ID da Emenda | O que constava no Plano Original (`v1.0`) | O que passa a vigorar (`v1.2-fase01`) | Achado de Auditoria que Originou a Mudança |
+| :--- | :--- | :--- | :--- |
+| **ADR-001: Redefinição do Estimando e da População-Alvo** | Mencionava *"Inferência Estatística de Opinião Pública"* e uso de *"MRP (Multilevel Regression and Post-Stratification)"*. | O sistema mede exclusivamente o **Universo Finito Observado de Contas Digitais Orgânicas ($\mathcal{U}_{\text{Org}, T}$)** sobre o tema $T$. O termo **MRP foi integralmente removido** (pois redes sociais não fornecem variáveis demográficas individuais observadas). O **Cenário 3** é definido como **Reponderado (Sensibilidade sob Hipótese de Ignorabilidade)** via Raking IPF. | `C-01`, `E-01`, `M-01`, Checklist #1 e #11 |
+| **ADR-002: Unidade Observacional e Unidade de Sorteio** | Dizia *"1 Cidadão Orgânico = 1 Opinião"* e sorteava postagens. | A unidade observacional e a unidade de sorteio no amostrador estratificado passam a ser **`1 Autor Digital Orgânico por Plataforma = 1 Unidade Observacional`** ($\pi_i = n_h/N_h$, $d_i = 1/\pi_i$), executada **após** a desinfecção em nível de conta. | `E-06`, `M-05`, Checklist #2 e #3 |
+| **ADR-003: Neutralidade Lexical na Coleta vs. Pós-Classificação** | Mencionava *"dicionário léxico balanceado (termos populares favoráveis, neutros e contrários)"* na etapa de coleta. | A **coleta** utiliza exclusivamente termos institucionais e descritivos neutros (`collection_query_terms`), enquanto marcadores valorativos favoráveis/contrários (`nlp_stance_taxonomy`) são restritos à **classificação pós-coleta**. | `M-01`, `M-04`, Achado 7 (1ª rodada) |
+| **ADR-004: Ambiente Python via `uv` e Commit Atômico Git Data API (Sem Xcode CLT)** | Previa instalar o pacote `Xcode Command Line Tools` (~2,5 GB) no MacBook na Fase 1. | Para preservar o espaço em disco do MacBook (28 GB livres), adotou-se o gerenciador standalone `uv` (Python 3.12 + `pyproject.toml`) e sincronização atômica via **Git Data API (`trees`/`commits`/`refs`)** com `pathspec` respeitando estritamente o `.gitignore`. | `M-01`, `G-03`, `G-09`, `B3` |
+| **ADR-005: Reformulação do Detector de Indícios de CIB e 5 Classes** | Usava `bot_risk_score` e marcava qualquer compartilhamento de URL/LSH como CIB ou mobilização. | Renomeado para `coordination_signal_index` (*Indício de Coordenação*). Incorpora *allowlist* de domínios jornalísticos/institucionais, penalização IDF, repetição de co-compartilhamento, normalização NFKD simétrica (`"Vote SIM"` / `"Vote NÃO"`), quarentena de spam com proteção legislativa e exclusão em **nível de conta**. | `C-02`, `C-03`, `M-05`, `M-06`, Anexo A |
+| **ADR-006: Decisão do Autor sobre Escopo de Plataformas e Nuvem (Grupo 2)** | Previa coleta nas 6 redes (incluindo WhatsApp e scrapers de contorno para X/Meta/TikTok) e uso do Google Drive no TCC. | **Decisão formal do autor do TCC:** Mantém-se o escopo técnico das 6 plataformas e o uso do Google Drive pessoal (apenas com dados pseudonimizados sem texto literal na saída `.parquet`) para fins de pesquisa acadêmica pessoal no TCC, registrando que uma futura adoção institucional pelo **DataSenado** passará por readequação jurídica específica (S3/MinIO on-premise, RIPD institucional e canais homologados). | Decisão do Autor sobre Grupo 2 (`L-05` a `L-08`) |
+
+---
+
+## 2. Status de Artefatos Anteriores (*SUPERSEDED*)
+- As versões iniciais do `walkthrough.md` e do `Boletim_Piloto_01` geradas antes da revisão `v1.2-fase01` são formalmente declaradas **SUPERSEDED (Substituídas)** por esta emenda e pelos artefatos atualizados gerados pelo pipeline auditado.

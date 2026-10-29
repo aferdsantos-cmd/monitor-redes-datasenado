@@ -1,0 +1,23 @@
+# Dependencias do Nucleo Auditado — Fase 01 (v1.2)
+# Nota (G-09): Removidas dependencias nao utilizadas na Fase 01 (networkx, statsmodels, scikit-learn)
+# e termos obsoletos ("MRP").
+
+# Banco de Dados Analitico Colunar e Configuracao (Pegada Zero / Parquet ZSTD)
+duckdb>=1.1.0
+pyarrow>=17.0.0
+pandas>=2.2.0
+numpy>=1.26.0
+pyyaml>=6.0.1
+python-dotenv>=1.0.1
+pathspec>=0.12.1
+
+# Inferencia Estatistica (Raking IPF, DEFF de Kish, Bootstrap Estratificado e Chi2 de Homogeneidade)
+scipy>=1.13.0
+
+# Busca de Similaridade Sub-Quadratica Esperada via LSH e Grafo de Leiden
+igraph>=0.11.6
+leidenalg>=0.10.2
+datasketch>=1.6.5
+
+# Suite de Testes Automatizados e Adversariais
+pytest>=8.0.0

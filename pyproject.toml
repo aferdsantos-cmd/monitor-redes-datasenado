@@ -1,0 +1,29 @@
+[project]
+name = "monitor-redes-datasenado"
+version = "1.2.0"
+description = "Monitor do Debate Público Digital com Validade Estatística (TCC Ciência de Dados & DataSenado)"
+readme = "README.md"
+requires-python = "==3.12.*"
+dependencies = [
+    "duckdb>=1.1.0",
+    "pyarrow>=17.0.0",
+    "pandas>=2.2.0",
+    "numpy>=1.26.0",
+    "pyyaml>=6.0.1",
+    "python-dotenv>=1.0.1",
+    "scipy>=1.13.0",
+    "igraph>=0.11.6",
+    "leidenalg>=0.10.2",
+    "datasketch>=1.6.5",
+    "pathspec>=0.12.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+addopts = "-v"
