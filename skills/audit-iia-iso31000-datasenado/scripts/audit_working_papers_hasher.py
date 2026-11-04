@@ -40,6 +40,10 @@ def collect_target_files(root: Path) -> list[Path]:
     if cfg.is_file():
         targets.add(cfg)
 
+    cfg_lock = root / "config" / "fase01_baseline_lock.json"
+    if cfg_lock.is_file():
+        targets.add(cfg_lock)
+
     # README.md
     readme = root / "README.md"
     if readme.is_file():
@@ -66,7 +70,47 @@ def collect_target_files(root: Path) -> list[Path]:
             if p.is_file() and "__pycache__" not in p.parts:
                 targets.add(p)
 
-    return sorted(list(targets), key=lambda p: str(p.relative_to(root)).lower())
+    # Ordem canônica: Baseline Fase 01 (WP-01 a WP-16), seguida de Fase 02 (WP-17 a WP-27)
+    canonical_order = [
+        "config/settings.yaml",
+        "docs/00_Plano_Implementacao_Historico_v1_0_SUPERSEDED.md",
+        "docs/01_Metodologia_Cientifica_e_Estatistica_NotebookLM.md",
+        "docs/02_Plano_Validacao_Estatistica.md",
+        "docs/03_Termo_de_Emenda_Plano_v1_1_e_ADR.md",
+        "docs/Relatorio_Correcoes_Fase01_v3.md",
+        "README.md",
+        "src/cleaning/lgpd_and_bot_filter.py",
+        "src/config_loader.py",
+        "src/reporting/pilot_audit_runner.py",
+        "src/sampling/stratified_sampler.py",
+        "src/stats/opinion_inference_engine.py",
+        "src/storage/github_zero_footprint_sync.py",
+        "src/storage/zero_footprint_sync.py",
+        "tests/test_fase01_audit_compliance.py",
+        "tests/test_skills_architecture.py",
+        # Fase 02:
+        "config/fase01_baseline_lock.json",
+        "docs/CHANGELOG_FASE01.md",
+        "src/storage/phase_baseline_guard.py",
+        "src/storage/duckdb_medallion_lake.py",
+        "src/collectors/__init__.py",
+        "src/collectors/base_collector.py",
+        "src/collectors/youtube_collector.py",
+        "src/collectors/telegram_collector.py",
+        "src/collectors/phase02_medallion_pipeline.py",
+        "docs/04_Arquitetura_DuckDB_Medallion_e_Conectores_Fase02.md",
+        "tests/test_fase02_duckdb_and_collectors.py",
+    ]
+
+    canonical_map = {rel: i for i, rel in enumerate(canonical_order)}
+
+    def sort_key(p: Path) -> tuple[int, str]:
+        rel = str(p.relative_to(root))
+        if rel in canonical_map:
+            return (0, f"{canonical_map[rel]:04d}")
+        return (1, rel.lower())
+
+    return sorted(list(targets), key=sort_key)
 
 
 def check_secrets(content_bytes: bytes) -> bool:

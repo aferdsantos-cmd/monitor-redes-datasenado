@@ -14,7 +14,9 @@ import json
 import math
 import os
 from pathlib import Path
+import re
 from typing import Any, Dict, List, Optional, Sequence, Tuple
+import unicodedata
 from zoneinfo import ZoneInfo
 
 import duckdb
@@ -26,6 +28,7 @@ from src.cleaning.lgpd_and_bot_filter import (
 )
 from src.collectors.base_collector import (
     BaseLexicallyNeutralCollector,
+    PHONE_PATTERN,
     RawCollectedManifestation,
 )
 from src.config_loader import load_settings
@@ -43,6 +46,12 @@ SP_TZ = ZoneInfo("America/Sao_Paulo")
 ZeroFootprintStorageManager = ZeroFootprintStorage
 
 
+def normalize_text_ascii(text: str) -> str:
+    """Normaliza texto para comparacao de marcadores de posicionamento."""
+    nfkd = unicodedata.normalize("NFKD", text)
+    return nfkd.encode("ascii", "ignore").decode("ascii").lower()
+
+
 class EphemeralDuckDBMedallionLake:
     """
     Gerenciador do Data Lake Analitico Efemero em DuckDB com limpeza Zero-Footprint garantida.
@@ -58,6 +67,7 @@ class EphemeralDuckDBMedallionLake:
         self.settings = settings_override or load_settings()
         self.storage = ZeroFootprintStorage()
         self.memory_only = memory_only
+        self._ephemeral_files: List[Path] = []
 
         if self.memory_only:
             self.db_path = ":memory:"
@@ -65,10 +75,12 @@ class EphemeralDuckDBMedallionLake:
         elif db_path is not None:
             self.db_path = str(db_path)
             self._local_db_file = Path(db_path)
+            self._ephemeral_files.append(self._local_db_file)
         else:
             ts_str = datetime.now().strftime('%H%M%S%f')
             self._local_db_file = self.storage.get_temp_path(f"duckdb_medallion_lake_{os.getpid()}_{ts_str}.duckdb")
             self.db_path = str(self._local_db_file)
+            self._ephemeral_files.append(self._local_db_file)
 
         # Conecta ao DuckDB com limites estritos para o MacBook
         self.conn = duckdb.connect(self.db_path)
@@ -216,21 +228,27 @@ class EphemeralDuckDBMedallionLake:
             author_hash = self.cleaner.anonymize_platform_account(m.platform, m.raw_author_id)
             hmac_key_id = self.cleaner.key_id
 
-            # 2. Redacao de PII no texto do comentario
+            # 2. Extracao de proxy geografico a partir de DDD (ANTES da redacao de telefone)
+            phone_hint = m.phone_or_location_hint
+            if not phone_hint and m.text:
+                phone_match = PHONE_PATTERN.search(m.text)
+                if phone_match:
+                    phone_hint = phone_match.group(0)
+
+            ddd_proxy, region_proxy = self.cleaner.extract_geographic_proxy_from_ddd(
+                phone_hint or m.text
+            )
+
+            # 3. Redacao de PII no texto do comentario
             sanitized_txt = BaseLexicallyNeutralCollector.redact_pii_from_text(m.text)
 
-            # 3. Normalizacao de data/hora para UTC e fuso horario de Brasilia
+            # 4. Normalizacao de data/hora para UTC e fuso horario de Brasilia
             dt_utc = BaseLexicallyNeutralCollector.normalize_timestamp_utc(m.created_at)
             dt_utc_naive = dt_utc.astimezone(timezone.utc).replace(tzinfo=None)
             dt_brt = to_brazil_timezone(dt_utc)
             shift_brt = get_time_slice_stratum(dt_brt)
             day_brt = dt_brt.strftime("%Y-%m-%d")
             created_at_brt_str = dt_brt.isoformat()
-
-            # 4. Extracao de proxy geografico a partir de DDD
-            ddd_proxy, region_proxy = self.cleaner.extract_geographic_proxy_from_ddd(
-                m.phone_or_location_hint or sanitized_txt
-            )
 
             rows.append((
                 m.comment_id,
@@ -276,13 +294,25 @@ class EphemeralDuckDBMedallionLake:
         if not raw_rows:
             return {"silver_comments": 0, "organic_accounts": 0}
 
+        # Carrega taxonomia de posicionamento especifica do tema em settings.yaml (C-04)
+        theme_cfg = self.settings.get("legislative_themes", {}).get(theme_id, {})
+        nlp_tax = theme_cfg.get("nlp_stance_taxonomy", {})
+        favorable_markers = [normalize_text_ascii(m) for m in nlp_tax.get("favorable_markers", [])]
+        against_markers = [normalize_text_ascii(m) for m in nlp_tax.get("against_markers", [])]
+
+        gen_fav = ["vote sim", "apoio", "favor", "proteger direitos", "transparencia", "governanca algoritmica"]
+        gen_against = ["vote nao", "vote não", "rejeitem", "contra", "derrubem", "censura", "atraso tecnologico"]
+        all_fav = favorable_markers + [m for m in gen_fav if m not in favorable_markers]
+        all_against = against_markers + [m for m in gen_against if m not in against_markers]
+
         posts_to_audit = []
         for r in raw_rows:
-            # Reconhece stance preliminar por palavras-chave neutras ou padrão
-            txt_lower = r[9].lower()
-            if any(w in txt_lower for w in ("vote sim", "apoio", "favor", "proteger direitos", "transparência")):
+            txt_norm = normalize_text_ascii(r[9])
+            fav_hits = sum(1 for m in all_fav if m in txt_norm)
+            against_hits = sum(1 for m in all_against if m in txt_norm)
+            if fav_hits > against_hits:
                 stance = "Favoravel"
-            elif any(w in txt_lower for w in ("vote não", "vote nao", "rejeitem", "contra", "derrubem", "censura")):
+            elif against_hits > fav_hits:
                 stance = "Contrario"
             else:
                 stance = "Neutro"
@@ -291,12 +321,24 @@ class EphemeralDuckDBMedallionLake:
             if isinstance(ts, datetime) and ts.tzinfo is None:
                 ts = ts.replace(tzinfo=timezone.utc)
 
+            # Deserializa shared_urls_json (r[10]) e hashtags_json (r[11])
+            try:
+                urls = json.loads(r[10]) if r[10] else []
+            except Exception:
+                urls = []
+            try:
+                tags = json.loads(r[11]) if r[11] else []
+            except Exception:
+                tags = []
+
             p = SocialPost(
                 post_id=r[0],
                 platform=r[2],
                 raw_author_id="",
                 timestamp=ts,
                 text=r[9],
+                shared_url=urls[0] if urls else None,
+                hashtags=tags,
                 stance=stance,
                 phone_or_location_hint=r[12] if r[12] != "NI" else None,
                 uf_proxy=r[12],
@@ -332,9 +374,10 @@ class EphemeralDuckDBMedallionLake:
                 str(getattr(p, "leiden_community_id", "") or ""),
             ))
 
-        self.conn.executemany("""
-            INSERT OR REPLACE INTO silver_comments_classified VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, silver_comment_rows)
+        if silver_comment_rows:
+            self.conn.executemany("""
+                INSERT OR REPLACE INTO silver_comments_classified VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, silver_comment_rows)
 
         # 3. Constroi o Quadro de Contas Organicas (U_Org)
         organic_frame = self.sampler.build_organic_account_frame(audited_posts)
@@ -356,9 +399,10 @@ class EphemeralDuckDBMedallionLake:
                 float(getattr(u, "fpc_factor", 1.0)),
             ))
 
-        self.conn.executemany("""
-            INSERT OR REPLACE INTO silver_organic_accounts_frame VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, silver_account_rows)
+        if silver_account_rows:
+            self.conn.executemany("""
+                INSERT OR REPLACE INTO silver_organic_accounts_frame VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, silver_account_rows)
 
         return {
             "silver_comments": len(silver_comment_rows),
@@ -398,6 +442,9 @@ class EphemeralDuckDBMedallionLake:
         Executa a alocacao amostral de Hamilton, infere os 3 cenarios estatisticos e exporta
         a Camada Gold para Parquet ZSTD SEM a coluna de texto literal (protecao contra reidentificacao).
         """
+        if not re.match(r"^[a-zA-Z0-9_-]+$", theme_id):
+            raise ValueError(f"Identificador de tema legislativo invalido para exportacao SQL: '{theme_id}'")
+
         # 1. Recupera as contas organicas e comentarios limpos
         accounts_raw = self.conn.execute("""
             SELECT account_key, author_id_hash, platform, modal_shift, modal_day,
@@ -409,34 +456,47 @@ class EphemeralDuckDBMedallionLake:
         if not accounts_raw:
             raise ValueError(f"Nenhuma conta organica encontrada na Camada Silver para o tema '{theme_id}'.")
 
-        # Converte para lista de SocialPost auditados
+        # Converte para lista de SocialPost auditados com Macroregion_proxy da Bronze
         comments_raw = self.conn.execute("""
-            SELECT comment_id, platform, author_id_hash, created_at_utc, sanitized_text, stance_label,
-                   activity_class, is_commercial_spam, account_suspected_cib
-            FROM silver_comments_classified
-            WHERE theme_id = ?
+            SELECT s.comment_id, s.platform, s.author_id_hash, s.created_at_utc, s.sanitized_text, s.stance_label,
+                   s.activity_class, s.is_commercial_spam, s.account_suspected_cib, b.Macroregion_proxy
+            FROM silver_comments_classified s
+            LEFT JOIN bronze_sanitized_ingest b ON s.comment_id = b.comment_id
+            WHERE s.theme_id = ?
         """, [theme_id]).fetchall()
 
         posts = []
+        author_historical_timestamps: Dict[str, datetime] = {}
         for cr in comments_raw:
+            ts = cr[3]
+            if isinstance(ts, datetime) and ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+            auth_h = cr[2]
+            if auth_h not in author_historical_timestamps or (isinstance(ts, datetime) and ts < author_historical_timestamps[auth_h]):
+                author_historical_timestamps[auth_h] = ts
+
             sp = SocialPost(
                 post_id=cr[0],
                 platform=cr[1],
                 raw_author_id="",
-                timestamp=cr[3],
+                timestamp=ts,
                 text=cr[4],
                 stance=cr[5],
+                region_proxy=cr[9] or "Nao Identificado",
             )
-            sp.author_hash = cr[2]
+            sp.author_hash = auth_h
             sp.activity_class = cr[6]
             sp.is_commercial_spam = cr[7]
             sp.account_suspected_cib = cr[8]
+            sp.region_proxy = cr[9] or "Nao Identificado"
             posts.append(sp)
 
         # 2. Sorteio de Amostra Estratificada
         organic_frame = self.sampler.build_organic_account_frame(posts)
+        pop_strata_sizes = Counter(u.stratum_key for u in organic_frame)
         n_req = target_sample_size or self.sampler.compute_required_sample_size(len(organic_frame))
         sampled_units, strata_counts = self.sampler.draw_stratified_account_sample(organic_frame, target_sample_size=n_req)
+        sample_strata_sizes = Counter(u.stratum_key for u in sampled_units)
 
         # 3. Estimacao dos 3 Cenarios via DigitalDiscourseStatisticalEngine
         metrics = self.stat_engine.compute_verified_discourse_indicators(
@@ -446,10 +506,33 @@ class EphemeralDuckDBMedallionLake:
         )
 
         # 4. Raking e Insercao em gold_sampled_organic_accounts (SEM COLUNA DE TEXTO)
+        sampled_plats = [u.platform for u in sampled_units]
+        sampled_regs = [getattr(u, "region_proxy", "Nao Identificado") for u in sampled_units]
+        calibrated_ipf_weights = self.stat_engine._compute_ipf_raking_weights(sampled_plats, sampled_regs)
+        for idx, u in enumerate(sampled_units):
+            w_factor = float(calibrated_ipf_weights[idx]) if idx < len(calibrated_ipf_weights) else 1.0
+            u.raking_weight_w = float(u.design_weight_d * w_factor)
+
         gold_account_rows = []
         for u in sampled_units:
-            # Timestamp truncado a hora para maxima privacidade
-            created_at_hour = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0, tzinfo=None)
+            # Timestamp real do autor truncado a hora
+            raw_ts = author_historical_timestamps.get(u.author_hash)
+            if raw_ts is not None:
+                created_at_hour = raw_ts.replace(minute=0, second=0, microsecond=0, tzinfo=None)
+            else:
+                created_at_hour = datetime(2026, 10, 27, 14, 0, 0)
+
+            n_h = int(sample_strata_sizes.get(u.stratum_key, 1))
+            N_h = int(pop_strata_sizes.get(u.stratum_key, n_h))
+            if N_h < n_h:
+                N_h = n_h
+            pi_i = float(n_h / max(1, N_h))
+            d_i = float(N_h / max(1e-9, n_h))
+            u.inclusion_probability_pi = pi_i
+            u.design_weight_d = d_i
+
+            w_rak = float(getattr(u, "raking_weight_w", d_i))
+
             gold_account_rows.append((
                 f"gold_{theme_id}_{u.platform}_{u.author_hash[:16]}",
                 theme_id,
@@ -457,11 +540,11 @@ class EphemeralDuckDBMedallionLake:
                 u.author_hash,
                 u.stratum_key,
                 created_at_hour,
-                strata_counts.get(u.stratum_key, len(organic_frame)),
-                len(sampled_units),
-                float(u.inclusion_probability_pi),
-                float(u.design_weight_d),
-                float(getattr(u, "raking_weight_w", u.design_weight_d)),
+                N_h,
+                n_h,
+                pi_i,
+                d_i,
+                w_rak,
                 Counter(u.stances).most_common(1)[0][0] if u.stances else "Neutro",
             ))
 
@@ -499,7 +582,12 @@ class EphemeralDuckDBMedallionLake:
 
         # 6. Exportacao para Parquet ZSTD
         ts_str = datetime.now().strftime('%H%M%S%f')
-        target_parquet = output_parquet_path or self.storage.get_temp_path(f"gold_{theme_id}_{os.getpid()}_{ts_str}.parquet")
+        if output_parquet_path is not None:
+            target_parquet = output_parquet_path
+        else:
+            target_parquet = self.storage.get_temp_path(f"gold_{theme_id}_{os.getpid()}_{ts_str}.parquet")
+            self._ephemeral_files.append(target_parquet)
+
         export_sql = f"COPY (SELECT * FROM gold_sampled_organic_accounts WHERE theme_id = '{theme_id}') TO '{target_parquet}' (FORMAT PARQUET, COMPRESSION ZSTD);"
         self.conn.execute(export_sql)
 
@@ -559,28 +647,26 @@ print(rao_scott_test)
 """
 
     def close_and_purge(self) -> None:
-        """Fecha a conexao e limpa qualquer arquivo residual em /tmp garantindo 0 KB."""
+        """Fecha a conexao e limpa apenas os arquivos efemeros criados por esta instancia garantindo 0 KB."""
         try:
             self.conn.close()
         except Exception:
             pass
 
-        if self._local_db_file and self._local_db_file.exists():
+        if self._local_db_file:
+            wal_file = Path(f"{self._local_db_file}.wal")
             try:
                 self._local_db_file.unlink(missing_ok=True)
             except Exception:
                 pass
+            try:
+                wal_file.unlink(missing_ok=True)
+            except Exception:
+                pass
 
-        # Limpeza de qualquer arquivo parquet ou wal orfao no cache temporario
-        cache_dir = Path("/tmp/monitor_datasenado_cache")
-        if cache_dir.exists():
-            for f in cache_dir.glob("duckdb_medallion_lake*"):
-                try:
-                    f.unlink(missing_ok=True)
-                except Exception:
-                    pass
-            for f in cache_dir.glob("gold_*.parquet"):
-                try:
-                    f.unlink(missing_ok=True)
-                except Exception:
-                    pass
+        for p in self._ephemeral_files:
+            try:
+                if p.exists():
+                    p.unlink(missing_ok=True)
+            except Exception:
+                pass

@@ -12,6 +12,7 @@ data/
 !requirements.txt
 /tmp/
 Auditorias/
+scratch/
 
 # Segredos, senhas, chaves de API e sessoes de navegador (NUNCA subir para o GitHub)
 .env

@@ -173,6 +173,30 @@ CREATE TABLE gold_sampled_organic_accounts (
     raking_weight DOUBLE NOT NULL,        -- w_i pos-Raking IPF
     stance_label VARCHAR NOT NULL         -- Posicionamento modal da conta
 );
+
+CREATE TABLE gold_scenario_estimates (
+    metric_id VARCHAR PRIMARY KEY,
+    theme_id VARCHAR NOT NULL,
+    total_organic_accounts INTEGER NOT NULL,
+    sampled_accounts INTEGER NOT NULL,
+    c1_unweighted_fav DOUBLE,
+    c1_unweighted_against DOUBLE,
+    c1_unweighted_neutral DOUBLE,
+    c2_equal_plat_fav DOUBLE,
+    c2_equal_plat_against DOUBLE,
+    c2_equal_plat_neutral DOUBLE,
+    c3_raking_fav DOUBLE,
+    c3_raking_against DOUBLE,
+    c3_raking_neutral DOUBLE,
+    c1_rogan_gladen_fav DOUBLE,
+    c1_rogan_gladen_against DOUBLE,
+    c1_rogan_gladen_neutral DOUBLE,
+    kish_deff DOUBLE,
+    effective_n DOUBLE,
+    internal_uncertainty_pp DOUBLE,
+    calibration_status VARCHAR,
+    calculated_at TIMESTAMP NOT NULL
+);
 ```
 
 ---

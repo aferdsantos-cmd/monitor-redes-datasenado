@@ -66,10 +66,18 @@ class TelegramPublicChannelCollector(BaseLexicallyNeutralCollector):
                     t = item.get("text", "")
                     parts.append(t)
                     item_type = item.get("type", "")
+                    href = item.get("href")
+                    if href and href not in urls:
+                        urls.append(href)
                     if item_type in ("link", "url") or t.startswith("http"):
-                        urls.append(t)
+                        if t not in urls:
+                            urls.append(t)
+                    elif item_type == "text_link":
+                        if href and href not in urls:
+                            urls.append(href)
                     elif item_type == "hashtag" or t.startswith("#"):
-                        tags.append(t)
+                        if t not in tags:
+                            tags.append(t)
 
             full_text = "".join(parts)
             # Complementa com extratores regex caso haja entidades nao marcadas
@@ -186,8 +194,13 @@ class TelegramPublicChannelCollector(BaseLexicallyNeutralCollector):
                 raise RuntimeError("TELEGRAM_BOT_TOKEN ausente e nenhum http_get_json injetado.")
             url = f"{TELEGRAM_API_BASE_URL}/bot{self.bot_token}/getUpdates?" + urllib.parse.urlencode(params)
             req = urllib.request.Request(url, headers={"User-Agent": "DataSenado-Telegram-Monitor/2.0"})
-            with urllib.request.urlopen(req, timeout=15) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
+            try:
+                with urllib.request.urlopen(req, timeout=15) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+            except urllib.error.HTTPError as e:
+                err_body = e.read().decode("utf-8", errors="ignore")
+                safe_err = err_body.replace(self.bot_token, "[REDACTED_BOT_TOKEN]") if self.bot_token else err_body
+                raise RuntimeError(f"Erro na Telegram Bot API (HTTP {e.code}): {safe_err}")
 
         collected: List[RawCollectedManifestation] = []
         updates = data.get("result", [])
@@ -197,7 +210,7 @@ class TelegramPublicChannelCollector(BaseLexicallyNeutralCollector):
             if not msg:
                 continue
 
-            text = msg.get("text", "")
+            text = msg.get("text") or msg.get("caption") or ""
             if not text:
                 continue
 
@@ -217,6 +230,26 @@ class TelegramPublicChannelCollector(BaseLexicallyNeutralCollector):
             sender = msg.get("from", {})
             raw_author = sender.get("username") or sender.get("id") or chat.get("username") or chat.get("id") or "tg_anon"
 
+            # Entidades anexas da Bot API
+            entities = msg.get("entities") or msg.get("caption_entities") or []
+            entity_urls = []
+            entity_tags = []
+            for ent in entities:
+                ent_type = ent.get("type")
+                if ent_type == "text_link" and ent.get("url"):
+                    entity_urls.append(ent.get("url"))
+                elif ent_type == "url":
+                    offset = ent.get("offset", 0)
+                    length = ent.get("length", 0)
+                    entity_urls.append(text[offset:offset + length])
+                elif ent_type == "hashtag":
+                    offset = ent.get("offset", 0)
+                    length = ent.get("length", 0)
+                    entity_tags.append(text[offset:offset + length])
+
+            combined_urls = list(dict.fromkeys(self.extract_urls(text) + entity_urls))
+            combined_tags = list(dict.fromkeys(self.extract_hashtags(text) + entity_tags))
+
             collected.append(
                 RawCollectedManifestation(
                     comment_id=f"tg_api_{upd.get('update_id', 0)}_{msg.get('message_id', 0)}",
@@ -227,8 +260,8 @@ class TelegramPublicChannelCollector(BaseLexicallyNeutralCollector):
                     created_at=self.normalize_timestamp_utc(dt),
                     collection_query_used=matched_query,
                     collector_modality="official_api_chronological",
-                    shared_urls=self.extract_urls(text),
-                    hashtags=self.extract_hashtags(text),
+                    shared_urls=combined_urls,
+                    hashtags=combined_tags,
                     metadata={"chat_title": chat.get("title", ""), "chat_id": chat.get("id")},
                 )
             )
@@ -290,8 +323,19 @@ class TelegramPublicChannelCollector(BaseLexicallyNeutralCollector):
                 "VOTE SIM ao PL 2338 para garantir transparência nas redes sociais e evitar deepfakes.",
             ]
 
+        sample_ddds = [" (11) 98765-4321", " (21) 99888-7766", " (71) 98111-2233", " (41) 99222-3344", " (61) 98333-4455", " (92) 99444-5566"]
+
         for i in range(count):
             msg_dt = base_dt.replace(minute=(i * 3) % 60)
+            base_ent = sample_entities[i % len(sample_entities)]
+            ddd_suffix = sample_ddds[i % len(sample_ddds)]
+            if isinstance(base_ent, str):
+                msg_text = base_ent + ddd_suffix
+            elif isinstance(base_ent, list):
+                msg_text = list(base_ent) + [{"type": "plain", "text": ddd_suffix}]
+            else:
+                msg_text = base_ent
+
             messages.append({
                 "id": 1000 + i,
                 "type": "message",
@@ -299,7 +343,7 @@ class TelegramPublicChannelCollector(BaseLexicallyNeutralCollector):
                 "date_unixtime": int(msg_dt.timestamp()),
                 "from": f"Membro_Canal_{i}",
                 "from_id": f"user{20000 + i}",
-                "text": sample_entities[i % len(sample_entities)],
+                "text": msg_text,
             })
 
         return {

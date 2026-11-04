@@ -43,7 +43,7 @@ if [ -n "$SAST_VIOLATIONS" ]; then
 fi
 echo "Varredura SAST: Nenhuma primitiva insegura detectada em src/ (OK)."
 
-echo "=== [GATE 4/4] Verificando Mapeador Sintático AST ==="
+echo "=== [GATE 4/5] Verificando Mapeador Sintático AST ==="
 AST_MAP_BIN="$REPO_ROOT/skills/eng-python-zero-footprint/scripts/ast_repo_map.py"
 if [ ! -x "$AST_MAP_BIN" ]; then
     echo "ERRO: ast_repo_map.py ausente ou sem permissão executável!"
@@ -52,4 +52,8 @@ fi
 "$AST_MAP_BIN" > /dev/null
 echo "Mapeador AST executado com sucesso (OK)."
 
-echo "=== Todos os 4 Gates de Verificação Aprovados com Sucesso! ==="
+echo "=== [GATE 5/5] Verificando Imutabilidade da Baseline Fase 01 (phase_baseline_guard) ==="
+"$UV_BIN" run python -m src.storage.phase_baseline_guard --verify
+echo "Guardião da Baseline Fase 01: 16 arquivos homologados 100% intactos (OK)."
+
+echo "=== Todos os 5 Gates de Verificação Aprovados com Sucesso! ==="

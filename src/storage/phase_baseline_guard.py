@@ -66,6 +66,26 @@ class BaselineIntegrityResult:
         )
 
 
+MANDATORY_PHASE01_FILES: List[str] = [
+    "config/settings.yaml",
+    "docs/00_Plano_Implementacao_Historico_v1_0_SUPERSEDED.md",
+    "docs/01_Metodologia_Cientifica_e_Estatistica_NotebookLM.md",
+    "docs/02_Plano_Validacao_Estatistica.md",
+    "docs/03_Termo_de_Emenda_Plano_v1_1_e_ADR.md",
+    "docs/Relatorio_Correcoes_Fase01_v3.md",
+    "README.md",
+    "src/cleaning/lgpd_and_bot_filter.py",
+    "src/config_loader.py",
+    "src/reporting/pilot_audit_runner.py",
+    "src/sampling/stratified_sampler.py",
+    "src/stats/opinion_inference_engine.py",
+    "src/storage/github_zero_footprint_sync.py",
+    "src/storage/zero_footprint_sync.py",
+    "tests/test_fase01_audit_compliance.py",
+    "tests/test_skills_architecture.py",
+]
+
+
 class Phase01BaselineGuard:
     """
     Controlador de governanca para imutabilidade da Fase 01 e sincronizacao da Fase 02+.
@@ -103,10 +123,17 @@ class Phase01BaselineGuard:
         missing: List[str] = []
         details: Dict[str, Dict[str, Any]] = {}
 
+        # 1. Valida presenca dos 16 arquivos mandatorios da Fase 01 no lock
+        for req_file in MANDATORY_PHASE01_FILES:
+            if req_file not in frozen_files:
+                missing.append(req_file)
+                details[req_file] = {"status": "MISSING_FROM_LOCK", "expected": None}
+
         for rel_posix, expected in frozen_files.items():
             target_path = self.repo_root / rel_posix
             if not target_path.exists():
-                missing.append(rel_posix)
+                if rel_posix not in missing:
+                    missing.append(rel_posix)
                 details[rel_posix] = {"status": "MISSING", "expected": expected}
                 continue
 
@@ -132,7 +159,7 @@ class Phase01BaselineGuard:
                     "lines": current_lines,
                 }
 
-        is_intact = (len(modified) == 0 and len(missing) == 0)
+        is_intact = (len(modified) == 0 and len(missing) == 0 and len(frozen_files) == len(MANDATORY_PHASE01_FILES))
         return BaselineIntegrityResult(
             is_intact=is_intact,
             baseline_version=baseline_version,
@@ -328,7 +355,21 @@ class Phase01BaselineGuard:
         except urllib.error.HTTPError:
             pass  # Se ja existir, segue
 
-        pr_result["status"] = "BRANCH_CREATED_READY_FOR_PR"
+        # Invoca a API de Pull Request (/pulls) ou comando gh pr create
+        try:
+            pr_data = _github_api_request(
+                token,
+                "POST",
+                f"/repos/{full_name}/pulls",
+                payload={"title": pr_title, "head": pr_branch, "base": "main", "body": pr_body},
+            )
+            pr_result["status"] = "PULL_REQUEST_CREATED"
+            pr_result["pr_url"] = pr_data.get("html_url", "")
+            pr_result["pr_number"] = pr_data.get("number")
+        except urllib.error.HTTPError as e:
+            pr_result["status"] = "BRANCH_CREATED_READY_FOR_PR"
+            pr_result["error"] = str(e)
+
         return pr_result
 
 

@@ -47,6 +47,16 @@ def test_fase01_baseline_lock_integrity_100_percent_intact() -> None:
     assert len(res.missing_files) == 0
 
 
+def test_baseline_lock_matches_working_papers() -> None:
+    """Atesta correspondencia exata dos 16 arquivos congelados no lock com os Working Papers WP-01 a WP-16."""
+    guard = Phase01BaselineGuard()
+    manifest = guard.load_lock_manifest()
+    frozen = manifest.get("frozen_files", {})
+    assert len(frozen) == 16
+    res = guard.verify_baseline_integrity()
+    assert res.is_intact is True
+
+
 def test_fase01_baseline_guard_blocks_unauthorized_modification(tmp_path: Path) -> None:
     """Simula a alteracao de 1 arquivo da Fase 01 e comprova que o guardiao lanca PermissionError."""
     # Cria uma copia do lock apontando para um diretorio temporario com arquivo adulterado

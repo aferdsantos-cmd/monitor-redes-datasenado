@@ -8,6 +8,7 @@ vieses de engajamento algoritmico da plataforma (Achado E-02 / ADR-006).
 
 from datetime import datetime, timezone
 import json
+import logging
 import os
 import re
 from typing import Any, Callable, Dict, List, Optional
@@ -19,6 +20,8 @@ from src.collectors.base_collector import (
     BaseLexicallyNeutralCollector,
     RawCollectedManifestation,
 )
+
+logger = logging.getLogger(__name__)
 
 YOUTUBE_API_BASE_URL = "https://www.googleapis.com/youtube/v3"
 
@@ -58,7 +61,8 @@ class YouTubeOfficialCollector(BaseLexicallyNeutralCollector):
                 return json.loads(resp.read().decode("utf-8"))
         except urllib.error.HTTPError as e:
             err_body = e.read().decode("utf-8", errors="ignore")
-            raise RuntimeError(f"Erro na YouTube Data API v3 (HTTP {e.code}): {err_body}")
+            safe_err = err_body.replace(self.api_key, "[REDACTED_API_KEY]") if self.api_key else err_body
+            raise RuntimeError(f"Erro na YouTube Data API v3 (HTTP {e.code}): {safe_err}")
 
     def enforce_chronological_order(self, order: str, context: str = "commentThreads") -> str:
         """
@@ -103,6 +107,67 @@ class YouTubeOfficialCollector(BaseLexicallyNeutralCollector):
             if vid:
                 video_ids.append(vid)
         return video_ids
+
+    def collect_comments_for_video(
+        self,
+        video_id: str,
+        theme_id: str,
+        query_used: str,
+        max_comments: int = 100,
+        order: str = "time",
+    ) -> List[RawCollectedManifestation]:
+        """
+        Coleta comentarios de um video via `commentThreads.list` com paginacao e order='time'.
+        """
+        self.validate_query_lexical_neutrality(theme_id, query_used)
+        enforced_order = self.enforce_chronological_order(order, context="commentThreads")
+        collected: List[RawCollectedManifestation] = []
+        page_token: Optional[str] = None
+
+        while len(collected) < max_comments:
+            params: Dict[str, Any] = {
+                "part": "snippet",
+                "videoId": video_id,
+                "textFormat": "plainText",
+                "maxResults": min(100, max_comments - len(collected)),
+                "order": enforced_order,
+            }
+            if page_token:
+                params["pageToken"] = page_token
+
+            try:
+                data = self._execute_api_get("commentThreads", params)
+            except urllib.error.HTTPError as e:
+                err_text = ""
+                try:
+                    err_text = e.read().decode("utf-8", errors="ignore")
+                except Exception:
+                    pass
+                if e.code == 403 and ("commentsdisabled" in err_text.lower() or "commentsdisabled" in str(e).lower()):
+                    logger.warning("Comentarios desativados no video %s (HTTP 403: commentsDisabled).", video_id)
+                    break
+                raise
+            except RuntimeError as e:
+                if "commentsdisabled" in str(e).lower():
+                    logger.warning("Comentarios desativados no video %s (%s).", video_id, e)
+                    break
+                raise
+
+            items = data.get("items", [])
+            if not items:
+                break
+
+            for item in items:
+                manifestation = self.parse_comment_thread_item(item, theme_id, query_used)
+                collected.append(manifestation)
+                if len(collected) >= max_comments:
+                    break
+
+            page_token = data.get("nextPageToken")
+            if not page_token:
+                break
+
+        return collected
 
     def parse_comment_thread_item(
         self,
@@ -154,49 +219,6 @@ class YouTubeOfficialCollector(BaseLexicallyNeutralCollector):
             },
         )
 
-    def collect_comments_for_video(
-        self,
-        video_id: str,
-        theme_id: str,
-        query_used: str,
-        max_comments: int = 100,
-        order: str = "time",
-    ) -> List[RawCollectedManifestation]:
-        """
-        Coleta comentarios de um video via `commentThreads.list` com paginacao e order='time'.
-        """
-        enforced_order = self.enforce_chronological_order(order, context="commentThreads")
-        collected: List[RawCollectedManifestation] = []
-        page_token: Optional[str] = None
-
-        while len(collected) < max_comments:
-            params: Dict[str, Any] = {
-                "part": "snippet",
-                "videoId": video_id,
-                "textFormat": "plainText",
-                "maxResults": min(100, max_comments - len(collected)),
-                "order": enforced_order,
-            }
-            if page_token:
-                params["pageToken"] = page_token
-
-            data = self._execute_api_get("commentThreads", params)
-            items = data.get("items", [])
-            if not items:
-                break
-
-            for item in items:
-                manifestation = self.parse_comment_thread_item(item, theme_id, query_used)
-                collected.append(manifestation)
-                if len(collected) >= max_comments:
-                    break
-
-            page_token = data.get("nextPageToken")
-            if not page_token:
-                break
-
-        return collected
-
     @staticmethod
     def generate_mock_api_v3_response(
         video_id: str,
@@ -226,8 +248,11 @@ class YouTubeOfficialCollector(BaseLexicallyNeutralCollector):
                 "Regulamentacao da IA e urgente no Brasil para evitar fraudes digitais e proteger dados pessoais.",
             ]
 
+        sample_ddds = [" (11) 98765-4321", " (21) 99888-7766", " (71) 98111-2233", " (41) 99222-3344", " (61) 98333-4455", " (92) 99444-5566"]
+
         for i in range(count):
             t_iso = (base_dt.replace(minute=i % 60)).isoformat().replace("+00:00", "Z")
+            comment_text = sample_texts[i % len(sample_texts)] + sample_ddds[i % len(sample_ddds)]
             items.append({
                 "kind": "youtube#commentThread",
                 "id": f"ct_{video_id}_{i}",
@@ -240,8 +265,8 @@ class YouTubeOfficialCollector(BaseLexicallyNeutralCollector):
                         "snippet": {
                             "authorDisplayName": f"Cidadao Brasil {i}",
                             "authorChannelId": {"value": f"UC_yt_author_{i}_{video_id}"},
-                            "textDisplay": sample_texts[i % len(sample_texts)],
-                            "textOriginal": sample_texts[i % len(sample_texts)],
+                            "textDisplay": comment_text,
+                            "textOriginal": comment_text,
                             "likeCount": i * 2,
                             "publishedAt": t_iso,
                         },
