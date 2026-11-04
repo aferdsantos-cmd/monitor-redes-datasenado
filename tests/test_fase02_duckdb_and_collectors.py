@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 import json
 from pathlib import Path
 import tempfile
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, Tuple
 import unittest.mock
 
 import duckdb
@@ -433,3 +433,232 @@ def test_phase02_orchestrator_supports_both_pilot_themes() -> None:
     res_6x1 = orch_6x1.run_medallion_pipeline(cleanup_after_run=True)
     assert res_6x1["theme_id"] == "pec_escala_6x1"
     assert res_6x1["total_collected_bronze"] == 100
+
+
+# ==============================================================================
+# 7. Testes de Saneamento Definitivo de Atalhos da Gestão (OS Fase 02 v2)
+# ==============================================================================
+
+
+def test_silver_layer_reads_all_pilot_themes_markers_from_settings_yaml() -> None:
+    """
+    Comprova que a Camada Silver carrega os marcadores lexicais dinamicamente de `pilot_themes`
+    em config/settings.yaml para ambos os temas (pl_ia_2338 e pec_escala_6x1), sem depender
+    de listas genéricas hardcoded.
+    """
+    settings = load_settings()
+    now_dt = datetime(2026, 11, 4, 12, 0, tzinfo=timezone.utc)
+
+    # 1. Teste para pl_ia_2338
+    with EphemeralDuckDBMedallionLake(memory_only=True, settings_override=settings) as lake:
+        items_ia = [
+            RawCollectedManifestation(
+                comment_id="c_ia_against",
+                theme_id="pl_ia_2338",
+                platform="youtube",
+                raw_author_id="user_ia_1",
+                text="Isso representa um atraso tecnologico inaceitavel",
+                created_at=now_dt,
+                collection_query_used="PL 2338",
+                collector_modality="official_api_chronological",
+            ),
+            RawCollectedManifestation(
+                comment_id="c_ia_fav",
+                theme_id="pl_ia_2338",
+                platform="youtube",
+                raw_author_id="user_ia_2",
+                text="Necessitamos de protecao de direitos autorais urgente",
+                created_at=now_dt,
+                collection_query_used="PL 2338",
+                collector_modality="official_api_chronological",
+            ),
+        ]
+        lake.ingest_to_bronze_and_sanitize(items_ia)
+        lake.build_silver_layer("pl_ia_2338")
+
+        res_ia = lake.conn.execute("""
+            SELECT comment_id, stance_label FROM silver_comments_classified
+            WHERE theme_id = 'pl_ia_2338' ORDER BY comment_id
+        """).fetchall()
+        stances_ia = {r[0]: r[1] for r in res_ia}
+        assert stances_ia["c_ia_against"] == "Contrario"
+        assert stances_ia["c_ia_fav"] == "Favoravel"
+
+    # 2. Teste para pec_escala_6x1
+    with EphemeralDuckDBMedallionLake(memory_only=True, settings_override=settings) as lake:
+        items_6x1 = [
+            RawCollectedManifestation(
+                comment_id="c_6x1_fav",
+                theme_id="pec_escala_6x1",
+                platform="telegram",
+                raw_author_id="user_6x1_1",
+                text="A reducao da jornada sem reducao salarial e um direito basico",
+                created_at=now_dt,
+                collection_query_used="escala 6x1",
+                collector_modality="passive_export_ingestion",
+            ),
+            RawCollectedManifestation(
+                comment_id="c_6x1_against_custo",
+                theme_id="pec_escala_6x1",
+                platform="telegram",
+                raw_author_id="user_6x1_2",
+                text="Havera um custo para pequenas empresas que nao poderao absorver",
+                created_at=now_dt,
+                collection_query_used="escala 6x1",
+                collector_modality="passive_export_ingestion",
+            ),
+            RawCollectedManifestation(
+                comment_id="c_6x1_against_desemprego",
+                theme_id="pec_escala_6x1",
+                platform="telegram",
+                raw_author_id="user_6x1_3",
+                text="Alerto para o risco de desemprego 6x1 no setor de servicos",
+                created_at=now_dt,
+                collection_query_used="escala 6x1",
+                collector_modality="passive_export_ingestion",
+            ),
+            RawCollectedManifestation(
+                comment_id="c_6x1_against_impacto",
+                theme_id="pec_escala_6x1",
+                platform="telegram",
+                raw_author_id="user_6x1_4",
+                text="O impacto produtivo escala 6x1 sera prejudicial a economia",
+                created_at=now_dt,
+                collection_query_used="escala 6x1",
+                collector_modality="passive_export_ingestion",
+            ),
+        ]
+        lake.ingest_to_bronze_and_sanitize(items_6x1)
+        lake.build_silver_layer("pec_escala_6x1")
+
+        res_6x1 = lake.conn.execute("""
+            SELECT comment_id, stance_label FROM silver_comments_classified
+            WHERE theme_id = 'pec_escala_6x1' ORDER BY comment_id
+        """).fetchall()
+        stances_6x1 = {r[0]: r[1] for r in res_6x1}
+        assert stances_6x1["c_6x1_fav"] == "Favoravel"
+        assert stances_6x1["c_6x1_against_custo"] == "Contrario"
+        assert stances_6x1["c_6x1_against_desemprego"] == "Contrario"
+        assert stances_6x1["c_6x1_against_impacto"] == "Contrario"
+
+
+def test_youtube_collector_rejects_all_non_chronological_orders() -> None:
+    """
+    Comprova que o coletor YouTube rejeita com ValueError qualquer ordenacao nao-cronologica
+    (incluindo 'relevance', 'viewCount', 'rating', 'title', 'videoCount'), tanto em search
+    quanto em commentThreads.
+    """
+    yt = YouTubeOfficialCollector()
+
+    # Ordenações cronológicas permitidas
+    assert yt.enforce_chronological_order("date", "search") == "date"
+    assert yt.enforce_chronological_order("time", "commentThreads") == "time"
+    assert yt.enforce_chronological_order(None, "search") == "date"
+    assert yt.enforce_chronological_order("", "commentThreads") == "time"
+
+    # Ordenações não-cronológicas expressamente proibidas
+    prohibited_orders = ["relevance", "viewCount", "rating", "title", "videoCount", "customAlgorithmic"]
+    for bad_order in prohibited_orders:
+        with pytest.raises(ValueError, match="VIÉS ALGORÍTMICO BLOQUEADO"):
+            yt.enforce_chronological_order(bad_order, context="search")
+
+        with pytest.raises(ValueError, match="VIÉS ALGORÍTMICO BLOQUEADO"):
+            yt.enforce_chronological_order(bad_order, context="commentThreads")
+
+        with pytest.raises(ValueError, match="VIÉS ALGORÍTMICO BLOQUEADO"):
+            yt.search_videos_by_query("pl_ia_2338", "PL 2338", order=bad_order)
+
+
+def test_baseline_guard_pr_workflow_creates_tree_and_commit_before_pr(tmp_path: Path) -> None:
+    """
+    Comprova que em dry_run=False o fluxo de PR do guardião cria uma árvore Git, um commit
+    e atualiza a branch remota antes de abrir o Pull Request no GitHub.
+    Valida a ordem exata das chamadas REST:
+    1. POST .../git/refs
+    2. POST .../git/trees
+    3. POST .../git/commits
+    4. PATCH .../git/refs/heads/pr/...
+    5. POST .../pulls
+    """
+    real_guard = Phase01BaselineGuard()
+    manifest = real_guard.load_lock_manifest()
+
+    fake_root = tmp_path / "fake_repo_pr"
+    fake_root.mkdir()
+    for rel_path in manifest["frozen_files"].keys():
+        dest = fake_root / rel_path
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes((REPO_ROOT / rel_path).read_bytes())
+
+    # Altera README.md da Fase 01
+    readme = fake_root / "README.md"
+    readme.write_text(readme.read_text(encoding="utf-8") + "\n<!-- Update para teste PR -->\n", encoding="utf-8")
+
+    fake_changelog = fake_root / "docs" / "CHANGELOG_FASE01.md"
+    fake_changelog.parent.mkdir(parents=True, exist_ok=True)
+    fake_changelog.write_text("# Changelog de Teste\n", encoding="utf-8")
+
+    guard = Phase01BaselineGuard(
+        repo_root=fake_root,
+        changelog_path=fake_changelog,
+    )
+
+    call_history: List[tuple[str, str]] = []
+
+    def fake_api_request(token: str, method: str, endpoint: str, payload: Optional[Dict] = None) -> Dict:
+        call_history.append((method, endpoint))
+        if method == "GET" and "/git/ref/heads/main" in endpoint:
+            return {"object": {"sha": "sha_main_head_123"}}
+        if method == "POST" and "/git/refs" in endpoint:
+            return {"ref": payload.get("ref"), "object": {"sha": payload.get("sha")}}
+        if method == "POST" and "/git/trees" in endpoint:
+            return {"sha": "sha_new_tree_456"}
+        if method == "POST" and "/git/commits" in endpoint:
+            return {"sha": "sha_new_commit_789"}
+        if method == "PATCH" and "/git/refs/heads/pr/" in endpoint:
+            return {"ref": endpoint, "object": {"sha": payload.get("sha")}}
+        if method == "POST" and "/pulls" in endpoint:
+            return {"number": 42, "html_url": "https://github.com/mock_org/mock_repo/pull/42"}
+        return {}
+
+    with unittest.mock.patch("src.storage.phase_baseline_guard.get_gh_token", return_value="fake_gh_token"):
+        with unittest.mock.patch("src.storage.phase_baseline_guard.get_gh_username", return_value="datasenado_bot"):
+            with unittest.mock.patch("src.storage.phase_baseline_guard._github_api_request", side_effect=fake_api_request):
+                res = guard.sync_repository_with_governance(
+                    commit_message="Atualizacao autorizada Fase 01",
+                    authorize_fase01_pr=True,
+                    new_fase01_version="v1.2.2-fase01",
+                    change_justification="Correcao de instrucoes da documentacao",
+                    dry_run=False,
+                    repo_name="monitor-redes-datasenado",
+                )
+
+    assert res["action"] == "PULL_REQUEST_WORKFLOW"
+    assert res["status"] == "PULL_REQUEST_CREATED"
+    assert res["commit_sha"] == "sha_new_commit_789"
+    assert res["pr_number"] == 42
+    assert res["pr_url"] == "https://github.com/mock_org/mock_repo/pull/42"
+
+    # Valida a ordem exata das chamadas HTTP da Git Data API
+    methods_and_endpoints = [(m, ep) for m, ep in call_history if m in ("POST", "PATCH")]
+    assert len(methods_and_endpoints) == 5
+
+    # 1. POST .../git/refs
+    assert methods_and_endpoints[0][0] == "POST"
+    assert "/git/refs" in methods_and_endpoints[0][1]
+
+    # 2. POST .../git/trees
+    assert methods_and_endpoints[1][0] == "POST"
+    assert "/git/trees" in methods_and_endpoints[1][1]
+
+    # 3. POST .../git/commits
+    assert methods_and_endpoints[2][0] == "POST"
+    assert "/git/commits" in methods_and_endpoints[2][1]
+
+    # 4. PATCH .../git/refs/heads/pr/...
+    assert methods_and_endpoints[3][0] == "PATCH"
+    assert "/git/refs/heads/pr/fase01-v1.2.2-fase01" in methods_and_endpoints[3][1]
+
+    # 5. POST .../pulls
+    assert methods_and_endpoints[4][0] == "POST"
+    assert "/pulls" in methods_and_endpoints[4][1]

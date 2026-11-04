@@ -64,20 +64,19 @@ class YouTubeOfficialCollector(BaseLexicallyNeutralCollector):
             safe_err = err_body.replace(self.api_key, "[REDACTED_API_KEY]") if self.api_key else err_body
             raise RuntimeError(f"Erro na YouTube Data API v3 (HTTP {e.code}): {safe_err}")
 
-    def enforce_chronological_order(self, order: str, context: str = "commentThreads") -> str:
+    def enforce_chronological_order(self, order: Optional[str] = None, context: str = "commentThreads") -> str:
         """
-        Valida que a ordenacao e estritamente cronologica (date ou time), rejeitando 'relevance'.
+        Valida que a ordenacao e estritamente cronologica (date ou time), rejeitando 'relevance'
+        e qualquer outra ordenacao nao-cronologica (viewCount, rating, title, videoCount).
         """
-        norm_order = (order or "").strip().lower()
-        if norm_order == "relevance":
+        if not order:
+            return "date" if context == "search" else "time"
+        norm_order = order.strip().lower()
+        if norm_order not in ("date", "time"):
             raise ValueError(
                 "VIÉS ALGORÍTMICO BLOQUEADO: Coleta observacional no YouTube deve usar "
-                f"exclusivamente order='time' ou order='date', nunca 'relevance'! (Contexto: {context})"
+                f"exclusivamente order='time' ou order='date', nunca '{order}'! (Contexto: {context})"
             )
-        if context == "search" and norm_order not in ("date", "time"):
-            return "date"
-        if context == "commentThreads" and norm_order not in ("time", "date"):
-            return "time"
         return norm_order
 
     def search_videos_by_query(
@@ -200,6 +199,12 @@ class YouTubeOfficialCollector(BaseLexicallyNeutralCollector):
 
         shared_urls = self.extract_urls(text)
         hashtags = self.extract_hashtags(text)
+        phone_hint = (
+            top_snippet.get("phone_or_location_hint")
+            or top_snippet.get("phoneOrLocationHint")
+            or snippet.get("phone_or_location_hint")
+            or snippet.get("phoneOrLocationHint")
+        )
 
         return RawCollectedManifestation(
             comment_id=f"yt_{comment_id}",
@@ -212,6 +217,7 @@ class YouTubeOfficialCollector(BaseLexicallyNeutralCollector):
             collector_modality="official_api_chronological",
             shared_urls=shared_urls,
             hashtags=hashtags,
+            phone_or_location_hint=phone_hint,
             metadata={
                 "like_count": top_snippet.get("likeCount", 0),
                 "total_reply_count": snippet.get("totalReplyCount", 0),
@@ -248,17 +254,19 @@ class YouTubeOfficialCollector(BaseLexicallyNeutralCollector):
                 "Regulamentacao da IA e urgente no Brasil para evitar fraudes digitais e proteger dados pessoais.",
             ]
 
-        sample_ddds = [" (11) 98765-4321", " (21) 99888-7766", " (71) 98111-2233", " (41) 99222-3344", " (61) 98333-4455", " (92) 99444-5566"]
+        sample_ddds = ["+55 (11) 98765-4321", "+55 (21) 99888-7766", "+55 (71) 98111-2233", "+55 (41) 99222-3344", "+55 (61) 98333-4455", "+55 (92) 99444-5566"]
 
         for i in range(count):
             t_iso = (base_dt.replace(minute=i % 60)).isoformat().replace("+00:00", "Z")
-            comment_text = sample_texts[i % len(sample_texts)] + sample_ddds[i % len(sample_ddds)]
+            comment_text = sample_texts[i % len(sample_texts)]
+            geo_hint = sample_ddds[i % len(sample_ddds)]
             items.append({
                 "kind": "youtube#commentThread",
                 "id": f"ct_{video_id}_{i}",
                 "snippet": {
                     "videoId": video_id,
                     "totalReplyCount": i % 3,
+                    "phone_or_location_hint": geo_hint,
                     "topLevelComment": {
                         "kind": "youtube#comment",
                         "id": f"c_{video_id}_{i}",
@@ -269,6 +277,7 @@ class YouTubeOfficialCollector(BaseLexicallyNeutralCollector):
                             "textOriginal": comment_text,
                             "likeCount": i * 2,
                             "publishedAt": t_iso,
+                            "phone_or_location_hint": geo_hint,
                         },
                     },
                 },

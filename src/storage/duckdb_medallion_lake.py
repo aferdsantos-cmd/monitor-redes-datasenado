@@ -295,13 +295,15 @@ class EphemeralDuckDBMedallionLake:
             return {"silver_comments": 0, "organic_accounts": 0}
 
         # Carrega taxonomia de posicionamento especifica do tema em settings.yaml (C-04)
-        theme_cfg = self.settings.get("legislative_themes", {}).get(theme_id, {})
+        themes_list = self.settings.get("pilot_themes", [])
+        themes_map = {t["id"]: t for t in themes_list if isinstance(t, dict) and "id" in t}
+        theme_cfg = themes_map.get(theme_id) or self.settings.get("legislative_themes", {}).get(theme_id, {})
         nlp_tax = theme_cfg.get("nlp_stance_taxonomy", {})
         favorable_markers = [normalize_text_ascii(m) for m in nlp_tax.get("favorable_markers", [])]
         against_markers = [normalize_text_ascii(m) for m in nlp_tax.get("against_markers", [])]
 
         gen_fav = ["vote sim", "apoio", "favor", "proteger direitos", "transparencia", "governanca algoritmica"]
-        gen_against = ["vote nao", "vote não", "rejeitem", "contra", "derrubem", "censura", "atraso tecnologico"]
+        gen_against = ["vote nao", "vote não", "rejeitem", "contra", "derrubem", "censura"]
         all_fav = favorable_markers + [m for m in gen_fav if m not in favorable_markers]
         all_against = against_markers + [m for m in gen_against if m not in against_markers]
 

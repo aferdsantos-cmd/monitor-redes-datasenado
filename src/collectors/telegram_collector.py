@@ -147,6 +147,7 @@ class TelegramPublicChannelCollector(BaseLexicallyNeutralCollector):
 
             msg_id = msg.get("id", len(collected) + 1)
             from_author = msg.get("from") or msg.get("from_id") or f"tg_author_{msg_id}"
+            phone_hint = msg.get("phone_or_location_hint") or msg.get("phoneOrLocationHint")
 
             collected.append(
                 RawCollectedManifestation(
@@ -160,6 +161,7 @@ class TelegramPublicChannelCollector(BaseLexicallyNeutralCollector):
                     collector_modality="passive_export_ingestion",
                     shared_urls=urls,
                     hashtags=tags,
+                    phone_or_location_hint=phone_hint,
                     metadata={
                         "channel_name": channel_name,
                         "forwarded_from": msg.get("forwarded_from"),
@@ -250,6 +252,8 @@ class TelegramPublicChannelCollector(BaseLexicallyNeutralCollector):
             combined_urls = list(dict.fromkeys(self.extract_urls(text) + entity_urls))
             combined_tags = list(dict.fromkeys(self.extract_hashtags(text) + entity_tags))
 
+            phone_hint = msg.get("phone_or_location_hint") or upd.get("phone_or_location_hint")
+
             collected.append(
                 RawCollectedManifestation(
                     comment_id=f"tg_api_{upd.get('update_id', 0)}_{msg.get('message_id', 0)}",
@@ -262,6 +266,7 @@ class TelegramPublicChannelCollector(BaseLexicallyNeutralCollector):
                     collector_modality="official_api_chronological",
                     shared_urls=combined_urls,
                     hashtags=combined_tags,
+                    phone_or_location_hint=phone_hint,
                     metadata={"chat_title": chat.get("title", ""), "chat_id": chat.get("id")},
                 )
             )
@@ -323,16 +328,16 @@ class TelegramPublicChannelCollector(BaseLexicallyNeutralCollector):
                 "VOTE SIM ao PL 2338 para garantir transparência nas redes sociais e evitar deepfakes.",
             ]
 
-        sample_ddds = [" (11) 98765-4321", " (21) 99888-7766", " (71) 98111-2233", " (41) 99222-3344", " (61) 98333-4455", " (92) 99444-5566"]
+        sample_ddds = ["+55 (11) 98765-4321", "+55 (21) 99888-7766", "+55 (71) 98111-2233", "+55 (41) 99222-3344", "+55 (61) 98333-4455", "+55 (92) 99444-5566"]
 
         for i in range(count):
             msg_dt = base_dt.replace(minute=(i * 3) % 60)
             base_ent = sample_entities[i % len(sample_entities)]
-            ddd_suffix = sample_ddds[i % len(sample_ddds)]
+            geo_hint = sample_ddds[i % len(sample_ddds)]
             if isinstance(base_ent, str):
-                msg_text = base_ent + ddd_suffix
+                msg_text = base_ent
             elif isinstance(base_ent, list):
-                msg_text = list(base_ent) + [{"type": "plain", "text": ddd_suffix}]
+                msg_text = list(base_ent)
             else:
                 msg_text = base_ent
 
@@ -344,6 +349,7 @@ class TelegramPublicChannelCollector(BaseLexicallyNeutralCollector):
                 "from": f"Membro_Canal_{i}",
                 "from_id": f"user{20000 + i}",
                 "text": msg_text,
+                "phone_or_location_hint": geo_hint,
             })
 
         return {

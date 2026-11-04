@@ -9,6 +9,7 @@ Novos arquivos da Fase 02 em diante têm autorização de commit e push direto e
 a integridade da Fase 01 seja atestada pelo `verify_baseline_integrity()`.
 """
 
+import base64
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import hashlib
@@ -344,18 +345,19 @@ class Phase01BaselineGuard:
         ref_main = _github_api_request(token, "GET", f"/repos/{full_name}/git/ref/heads/main")
         main_sha = ref_main["object"]["sha"]
 
-        # Cria a branch de PR remota
-        try:
-            _github_api_request(
-                token,
-                "POST",
-                f"/repos/{full_name}/git/refs",
-                payload={"ref": f"refs/heads/{pr_branch}", "sha": main_sha},
-            )
-        except urllib.error.HTTPError:
-            pass  # Se ja existir, segue
+        # Cria commit real na branch de PR antes de abrir o Pull Request (1 commit ahead of main)
+        files_for_pr = list(integrity.modified_files) + ["docs/CHANGELOG_FASE01.md"]
+        commit_sha = self._commit_working_tree_to_branch(
+            token=token,
+            full_name=full_name,
+            branch_name=pr_branch,
+            parent_sha=main_sha,
+            commit_message=pr_title,
+            files_to_commit=files_for_pr,
+        )
+        pr_result["commit_sha"] = commit_sha
 
-        # Invoca a API de Pull Request (/pulls) ou comando gh pr create
+        # Invoca a API de Pull Request (/pulls)
         try:
             pr_data = _github_api_request(
                 token,
@@ -371,6 +373,99 @@ class Phase01BaselineGuard:
             pr_result["error"] = str(e)
 
         return pr_result
+
+    def _commit_working_tree_to_branch(
+        self,
+        token: str,
+        full_name: str,
+        branch_name: str,
+        parent_sha: str,
+        commit_message: str,
+        files_to_commit: Optional[List[str]] = None,
+    ) -> str:
+        """
+        Cria uma arvore Git e um commit na branch de PR antes de chamar a API de Pull Request.
+        Garante que a branch tenha '1 commit ahead of main' real no GitHub.
+        Ordem de operacoes da Git Data API:
+        1. POST .../git/refs (cria branch remota se nao existir)
+        2. POST .../git/trees (cria arvore com base_tree: parent_sha)
+        3. POST .../git/commits (cria commit com pai parent_sha)
+        4. PATCH .../git/refs/heads/{branch_name} (aponta a ref para o novo commit)
+        """
+        # 1. Cria a ref da branch a partir do parent_sha se nao existir
+        try:
+            _github_api_request(
+                token,
+                "POST",
+                f"/repos/{full_name}/git/refs",
+                payload={"ref": f"refs/heads/{branch_name}", "sha": parent_sha},
+            )
+        except urllib.error.HTTPError:
+            pass
+
+        # 2. Constrói os itens da árvore com base_tree: parent_sha
+        target_files = list(files_to_commit) if files_to_commit else [p.relative_to(self.repo_root).as_posix() for p in collect_tracked_files(self.repo_root)]
+        changelog_rel = "docs/CHANGELOG_FASE01.md"
+        if changelog_rel not in target_files and (self.repo_root / changelog_rel).exists():
+            target_files.append(changelog_rel)
+
+        tree_items = []
+        for rel_path in target_files:
+            p = self.repo_root / rel_path
+            if p.exists() and p.is_file():
+                try:
+                    content_str = p.read_text(encoding="utf-8")
+                    tree_items.append({
+                        "path": rel_path,
+                        "mode": "100644",
+                        "type": "blob",
+                        "content": content_str,
+                    })
+                except UnicodeDecodeError:
+                    content_b64 = base64.b64encode(p.read_bytes()).decode("ascii")
+                    blob_resp = _github_api_request(
+                        token,
+                        "POST",
+                        f"/repos/{full_name}/git/blobs",
+                        payload={"content": content_b64, "encoding": "base64"},
+                    )
+                    tree_items.append({
+                        "path": rel_path,
+                        "mode": "100644",
+                        "type": "blob",
+                        "sha": blob_resp["sha"],
+                    })
+
+        tree_resp = _github_api_request(
+            token,
+            "POST",
+            f"/repos/{full_name}/git/trees",
+            payload={"base_tree": parent_sha, "tree": tree_items},
+        )
+        new_tree_sha = tree_resp.get("sha", "mock_tree_sha")
+
+        # 3. Cria o objeto de commit
+        commit_resp = _github_api_request(
+            token,
+            "POST",
+            f"/repos/{full_name}/git/commits",
+            payload={
+                "message": commit_message,
+                "tree": new_tree_sha,
+                "parents": [parent_sha],
+            },
+        )
+        new_commit_sha = commit_resp.get("sha", "mock_commit_sha")
+
+        # 4. Atualiza a ref da branch para apontar para o novo commit
+        _github_api_request(
+            token,
+            "PATCH",
+            f"/repos/{full_name}/git/refs/heads/{branch_name}",
+            payload={"sha": new_commit_sha, "force": True},
+        )
+
+        return new_commit_sha
 
 
 if __name__ == "__main__":
