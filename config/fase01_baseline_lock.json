@@ -1,0 +1,120 @@
+{
+  "baseline_version": "v1.2.0-fase01",
+  "baseline_commit": "7af3548b",
+  "locked_at": "2026-11-04",
+  "governance_policy": "PULL_REQUEST_AND_VERSION_BUMP_REQUIRED_FOR_FASE01",
+  "frozen_files": {
+    "config/settings.yaml": {
+      "wp_id": "WP-01",
+      "sha256_full": "afb2d506fe9f32a9318bff30b5a0c700eb5e02764966631ea95416425dbe6d5f",
+      "sha256_12": "afb2d506fe9f",
+      "bytes": 5878,
+      "lines": 131
+    },
+    "docs/00_Plano_Implementacao_Historico_v1_0_SUPERSEDED.md": {
+      "wp_id": "WP-02",
+      "sha256_full": "f93b3aed7968b05e2ea5d9af833fc404cdc9664a68968fd5e474ebb460042893",
+      "sha256_12": "f93b3aed7968",
+      "bytes": 2827,
+      "lines": 28
+    },
+    "docs/01_Metodologia_Cientifica_e_Estatistica_NotebookLM.md": {
+      "wp_id": "WP-03",
+      "sha256_full": "603f6fff5e16df334943abbcb4bdb4bbe49eba33c0542cd4add20f2ecc62e695",
+      "sha256_12": "603f6fff5e16",
+      "bytes": 13402,
+      "lines": 102
+    },
+    "docs/02_Plano_Validacao_Estatistica.md": {
+      "wp_id": "WP-04",
+      "sha256_full": "d75759ed57cffa1d15821c98e43adf9677e0e1e32ae60efdb75540297c678b20",
+      "sha256_12": "d75759ed57cf",
+      "bytes": 8384,
+      "lines": 67
+    },
+    "docs/03_Termo_de_Emenda_Plano_v1_1_e_ADR.md": {
+      "wp_id": "WP-05",
+      "sha256_full": "d3e0e732b7fe967a7c87d0c7c0640cf964483fa8e7f6b260c14c72dc33999e4f",
+      "sha256_12": "d3e0e732b7fe",
+      "bytes": 7373,
+      "lines": 34
+    },
+    "docs/Relatorio_Correcoes_Fase01_v3.md": {
+      "wp_id": "WP-06",
+      "sha256_full": "da9ecfba63db8ac56f26e58702da5d410724669ce9c4b7ad426bd4c2de3910f5",
+      "sha256_12": "da9ecfba63db",
+      "bytes": 16034,
+      "lines": 118
+    },
+    "README.md": {
+      "wp_id": "WP-07",
+      "sha256_full": "bd3f977dc2b09ae7c0e5a6433bab6d50d562b14f09c4e9dbf7df126d08b65df4",
+      "sha256_12": "bd3f977dc2b0",
+      "bytes": 6278,
+      "lines": 45
+    },
+    "src/cleaning/lgpd_and_bot_filter.py": {
+      "wp_id": "WP-08",
+      "sha256_full": "2944b0fdab38159ecc1e4b32ecf83a2cff0f97032787a72c5107ed0e52d90e28",
+      "sha256_12": "2944b0fdab38",
+      "bytes": 36038,
+      "lines": 709
+    },
+    "src/config_loader.py": {
+      "wp_id": "WP-09",
+      "sha256_full": "c9ef1b9c78d5ffcc6963d3f3311889e7ce0933b3cec4f9599d4b4da71c5ef654",
+      "sha256_12": "c9ef1b9c78d5",
+      "bytes": 1802,
+      "lines": 48
+    },
+    "src/reporting/pilot_audit_runner.py": {
+      "wp_id": "WP-10",
+      "sha256_full": "fd3f838393bc2a0e2890e1a6d9ae153b08b8e797653b382c68f87bb71181c50d",
+      "sha256_12": "fd3f838393bc",
+      "bytes": 22398,
+      "lines": 382
+    },
+    "src/sampling/stratified_sampler.py": {
+      "wp_id": "WP-11",
+      "sha256_full": "f7be7ffeed9920e5b4523efdce200c2867287393730b6a9b68dd04ac3d033948",
+      "sha256_12": "f7be7ffeed99",
+      "bytes": 15451,
+      "lines": 358
+    },
+    "src/stats/opinion_inference_engine.py": {
+      "wp_id": "WP-12",
+      "sha256_full": "0052984d272bc3e1fb1bc1ff061c928e9c766088fb3afa7b5c4623de5314c951",
+      "sha256_12": "0052984d272b",
+      "bytes": 41538,
+      "lines": 887
+    },
+    "src/storage/github_zero_footprint_sync.py": {
+      "wp_id": "WP-13",
+      "sha256_full": "25b43326d3fbe42b3c5d78c5e08f213854a94fc5b80a3cd0f69cfd98570eb32a",
+      "sha256_12": "25b43326d3fb",
+      "bytes": 9531,
+      "lines": 267
+    },
+    "src/storage/zero_footprint_sync.py": {
+      "wp_id": "WP-14",
+      "sha256_full": "0f89eb695f6a5dd44677bf6b2d10f7f2a7913abf497aa470487e6a5226f116b0",
+      "sha256_12": "0f89eb695f6a",
+      "bytes": 9821,
+      "lines": 211
+    },
+    "tests/test_fase01_audit_compliance.py": {
+      "wp_id": "WP-15",
+      "sha256_full": "b6243b1bd29457021cf6b8fe273bc6bf5a6d283048142024de36904aaa348df8",
+      "sha256_12": "b6243b1bd294",
+      "bytes": 28832,
+      "lines": 574
+    },
+    "tests/test_skills_architecture.py": {
+      "wp_id": "WP-16",
+      "sha256_full": "1bedb09b89a580c691eeaabefcb7109f640b083f7aa56fa999198c788e7adbd1",
+      "sha256_12": "1bedb09b89a5",
+      "bytes": 16878,
+      "lines": 367
+    }
+  }
+}
