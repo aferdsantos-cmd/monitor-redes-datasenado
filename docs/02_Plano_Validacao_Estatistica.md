@@ -24,7 +24,7 @@ Correção de erro de classificação (Rogan & Gladen, 1978):
 2. **O que os Intervalos NÃO Quantificam:**
    - Não quantificam viés de autosseleção da coleta (*quem decide publicar vs. quem apenas lê*), viés algorítmico das plataformas digitais nem o silêncio de cidadãos desconectados.
 3. **Natureza do Cenário 3 (Reponderado — Sensibilidade sob Hipótese de Ignorabilidade):**
-   - O Cenário 3 aplica *Iterative Proportional Fitting (Raking)* com *Weight Trimming* $[0,25; 4,00]$ usando pesos normativos de referência de uso de plataformas e macrorregiões do IBGE. Ele é reportado exclusivamente como **análise de sensibilidade sob a hipótese não testável de ignorabilidade condicional**, acompanhado sempre do seu `calibration_status` (`CALIBRADO_OK` ou `NAO_ATINGIDA_LIMITADA_POR_TRIMMING`).
+   - O Cenário 3 aplica *Iterative Proportional Fitting (Raking)* com *Weight Trimming* $[0,25; 4,00]$ e tolerância de convergência $L_1$ de $1,0\text{ p.p.} (0,01)$ (alinhada a `config/settings.yaml`) usando pesos normativos de referência de uso de plataformas e macrorregiões do IBGE. Ele é reportado exclusivamente como **análise de sensibilidade sob a hipótese não testável de ignorabilidade condicional**, acompanhado sempre do seu `calibration_status` (`CALIBRADO_OK` ou `NAO_ATINGIDA_LIMITADA_POR_TRIMMING`).
 
 ---
 
@@ -43,7 +43,7 @@ Correção de erro de classificação (Rogan & Gladen, 1978):
 ## 3. Hipóteses Científicas Falsificáveis Revisadas (`M-02`, `E-04`, `E-09`)
 
 1. **Hipótese $H_1$ (Efeito de Desinfecção e Desduplicação por Conta com Amostras Dependentes):**
-   *A diferença absoluta $\Delta = |\hat{p}_{\text{bruto}} - \hat{p}_{\text{C1, limpo}}|$ entre a proporção de posicionamento no volume bruto de postagens e a proporção consolidada por conta orgânica ($\mathcal{U}_{\text{Org}}$), estimada via **bootstrap pareado em nível de conta** (respeitando a dependência estrutural entre o conjunto bruto e seu subconjunto limpo), excede o limiar de relevância prática pré-especificado de $\delta = 5,0\text{ pontos percentuais}$ (isto é, o limite inferior do IC 95% bilateral de $|\Delta|$ supera $5,0\text{ p.p.}$).*
+   *A diferença absoluta $\Delta = |\hat{p}_{\text{bruto}} - \hat{p}_{\text{C1, limpo}}|$ entre a proporção de posicionamento no volume bruto de postagens e a proporção consolidada por conta orgânica ($\mathcal{U}_{\text{Org}}$), estimada formalmente via **Bootstrap Pareado por Conta (`paired_bootstrap_clean_vs_raw_test`)** (respeitando a dependência estrutural entre o conjunto bruto e seu subconjunto limpo através de reamostragens pareadas simultâneas com $B = 1.000$ réplicas), excede o limiar de relevância prática pré-especificado de $\delta = 5,0\text{ pontos percentuais}$ (isto é, o limite inferior do IC 95% bilateral de $|\Delta|$ supera $5,0\text{ p.p.}$).*
 
 2. **Hipótese $H_2$ (Heterogeneidade Inter-Plataformas com Tamanho de Efeito e Correção de Holm):**
    *A distribuição de posicionamento legislativo ($\text{Favorável}, \text{Contrário}, \text{Neutro}$) nas contas orgânicas ($\mathcal{U}_{\text{Org}}$) difere significativamente entre as plataformas digitais ($\chi^2$ de Pearson intraplataforma ajustado pelo $DEFF$, com $p < 0,05$ após correção de **Holm-Bonferroni** para múltiplos testes) e apresenta tamanho de efeito não-trivial (**$V\text{ de Cramér} \ge 0,10$**).*
@@ -52,7 +52,7 @@ Correção de erro de classificação (Rogan & Gladen, 1978):
    *O deslocamento absoluto $|\hat{\theta}_{\text{C3}} - \hat{\theta}_{\text{C1}}|$ produzido pela reponderação sob limites de trimming $[0,25; 4,00]$ é superior à variação interna induzida pela escolha da regra de desempate modal de contas (`neutral_tie` vs. `last_post` vs. `fractional`), demonstrando que a composição de plataformas domina a incerteza de agregação intra-conta.*
 
 4. **Hipótese $H_4$ (Concordância Inter-Anotadores e Validação do Classificador NLP):**
-   *Em uma amostra aleatória estratificada de no mínimo $n_{\text{val}} = 300$ contas orgânicas (dimensionada para garantir meia-largura do IC 95% de $\kappa$ inferior a $\pm 0,05$), o classificador de posicionamento legislativo atinge concordância **substancial** ($0,61 \le \kappa \text{ de Cohen} \le 0,80$, segundo a escala de Landis & Koch, 1977; meta operacional $\kappa \ge 0,70$ e $\alpha \text{ de Krippendorff} \ge 0,70$) em relação ao consenso de dois anotadores humanos independentes, sem ultrapassar o teto de concordância humano-humano ($\kappa_{\text{HH}}$).*
+   *Em uma amostra aleatória estratificada de no mínimo **$n_{\text{val}} = 550$ contas orgânicas** (rigorosamente dimensionada pela variância assintótica de Fleiss et al., 2003 para $\kappa = 0,75, p_o = 0,85, p_e = 0,40$ e erro máximo $E \le \pm 0,05$, onde $n_{\min} = \lceil 1,96^2 \cdot 0,85 \cdot 0,15 / (0,05^2 \cdot 0,60^2) \rceil = 545 \le 550$, garantindo meia-largura analítica de $\pm 0,0498 \le \pm 0,05$), o classificador de posicionamento legislativo atinge concordância **substancial** ($0,61 \le \kappa \text{ de Cohen} \le 0,80$, segundo a escala de Landis & Koch, 1977; meta operacional $\kappa \ge 0,70$ e $\alpha \text{ de Krippendorff} \ge 0,70$) em relação ao consenso de dois anotadores humanos independentes, sem ultrapassar o teto de concordância humano-humano ($\kappa_{\text{HH}}$).*
 
 ---
 

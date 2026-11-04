@@ -19,5 +19,4 @@ igraph>=0.11.6
 leidenalg>=0.10.2
 datasketch>=1.6.5
 
-# Suite de Testes Automatizados e Adversariais
-pytest>=8.0.0
+# Dependencias de teste e desenvolvimento (pytest, ruff) ficam em pyproject.toml [project.optional-dependencies] dev

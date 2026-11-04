@@ -9,9 +9,14 @@ Resolve o achado G-01 da Auditoria Cientifica:
   eliminando caminhos absolutos da maquina do desenvolvedor (G-08).
 """
 
+import os
 from pathlib import Path
 from typing import Any, Dict, Optional
+from dotenv import load_dotenv
 import yaml
+
+if os.environ.get("DATASENADO_DISABLE_DOTENV") != "1":
+    load_dotenv()
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_SETTINGS_PATH = REPO_ROOT / "config" / "settings.yaml"

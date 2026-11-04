@@ -72,8 +72,10 @@ cib_and_bot_detection:
     - "agenciabrasil.ebc.com.br"
 
 # Pesos Normativos de Referencia para o Cenario 3 (Reponderado - Analise de Sensibilidade sob Ignorabilidade, E-02):
-# Nota Metodologica (E-02): Valores normativos de referencia inspirados na proporcao relativa de uso de plataformas no Brasil
-# (ref. TIC Domicilios CGI.br 2024, indicador B16A / Reuters Institute Digital News Report Brasil) e Censo Demografico IBGE 2022.
+# Nota Metodologica (E-02): Valores normativos de referencia baseados na Pesquisa TIC Domicilios
+# (CGI.br/NIC.br — Modulo C: Uso da Internet pelos Individuos / redes sociais) combinada ao
+# Reuters Institute Digital News Report (Brasil) — margens normativas de referencia para analise
+# de sensibilidade (Cenario 3) e Censo Demografico IBGE 2022.
 platform_reference_weights_brazil:
   whatsapp: 0.30
   youtube: 0.25

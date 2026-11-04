@@ -163,12 +163,12 @@ def push_atomic_milestone_to_github(
     commit_message: str,
     tag_name: Optional[str] = "v1.2-fase01",
     private: bool = False,
-    orphan_clean_history: bool = True,
+    orphan_clean_history: bool = False,
 ) -> str:
     """
     Cria um UNICO COMMIT ATOMICO no GitHub contendo todos os arquivos rastreados (respeitando `.gitignore`).
-    Quando `orphan_clean_history=True` (B2 / C-05), cria um root commit sem `parents` e faz force-update
-    na ref `heads/main`, expurgando todos os commits antigos do historico da branch `main`!
+    Por padrao (`orphan_clean_history=False`), preserva o historico linear com o commit anterior como parent.
+    A flag `orphan_clean_history=True` e reservada para operacoes excepcionais de expurgo de commits.
     """
     token = get_gh_token()
     username = get_gh_username(token)
@@ -260,8 +260,8 @@ def push_atomic_milestone_to_github(
 if __name__ == "__main__":
     push_atomic_milestone_to_github(
         repo_name="monitor-redes-datasenado",
-        commit_message="Milestone v1.2-fase01: Correcao Integral da 2a Rodada de Auditoria Cientifica (Grupo 1 Completo)",
+        commit_message="Milestone v1.2-fase01 (R3): Correcao Final Integral dos 30 Testes de Auditoria Operacional",
         tag_name="v1.2-fase01",
         private=False,
-        orphan_clean_history=True,
+        orphan_clean_history=False,
     )

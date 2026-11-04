@@ -30,7 +30,8 @@ from src.sampling.stratified_sampler import ObservedUniverseStratifiedSampler
 from src.stats.opinion_inference_engine import DigitalDiscourseStatisticalEngine
 from src.storage.zero_footprint_sync import ZeroFootprintStorage
 
-load_dotenv()
+if os.environ.get("DATASENADO_DISABLE_DOTENV") != "1":
+    load_dotenv()
 
 # Carrega os pesos de referencia diretamente do config/settings.yaml (G-01)
 _SETTINGS = load_settings()
@@ -273,7 +274,11 @@ def run_audited_pilot_verification(sync_to_cloud: bool = True) -> None:
         f"C1 (Sorteio Interno n={metrics_sampled.sampled_organic_accounts_n} com d_i=1/pi_i): {metrics_sampled.scenario_1_organic_unweighted_pct}"
     )
 
-    backend_mode = "gdrive" if (sync_to_cloud and os.environ.get("GDRIVE_DATASETS_LAKE_FOLDER_ID")) else "local_repro"
+    backend_env = os.environ.get("STORAGE_BACKEND_MODE")
+    if backend_env:
+        backend_mode = backend_env
+    else:
+        backend_mode = "gdrive" if (sync_to_cloud and os.environ.get("GDRIVE_DATASETS_LAKE_FOLDER_ID")) else "local_repro"
     storage = ZeroFootprintStorage(backend_mode=backend_mode)
 
     parquet_path = storage.get_temp_path("amostra_piloto_pl2338_auditada.parquet")
@@ -322,13 +327,14 @@ def run_audited_pilot_verification(sync_to_cloud: bool = True) -> None:
 
 ## 1. Comparativo dos 3 Cenários de Indicadores Digitais vs. Volume Bruto Contaminado
 
-| Posicionamento | Monitor Comum (Volume Bruto sem Spam) | **Cenário 1: Orgânico de Contas ($\\mathcal{{U}}_{{\\text{{Org}}}}$)** | **Cenário 1 Corrigido (Rogan-Gladen)** | **Cenário 2: Equilibrado por Plataforma ($1/K$)** | **Cenário 3: Reponderado (Sensibilidade sob Ignorabilidade)** | IC 95% Bootstrap Estratificado (Cenário 3) |
+| Posicionamento | Monitor Comum (Volume Bruto sem Spam) | **Cenário 1: Orgânico de Contas ($\\mathcal{{U}}_{{\\text{{Org}}}}$)** | **Cenário 1 c/ Rogan-Gladen (Simulação Ilustrativa TPR=0,90/TNR=0,92 — Pendente Padrão-Ouro Fase 05)** | **Cenário 2: Equilibrado por Plataforma ($1/K$)** | **Cenário 3: Reponderado (Sensibilidade sob Ignorabilidade)** | IC 95% Bootstrap Estratificado (Cenário 3) |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: |
 | **Favorável** | {metrics_full.raw_contaminated_volume_pct['Favoravel']:.1f}% | **{metrics_full.scenario_1_organic_unweighted_pct['Favoravel']:.1f}%** | {metrics_full.rogan_gladen_corrected_c1_pct['Favoravel']:.1f}% | **{metrics_full.scenario_2_equal_platform_pct['Favoravel']:.1f}%** | **{metrics_full.scenario_3_reweighted_sensitivity_pct['Favoravel']:.1f}%** | [{fav_ci[0]:.1f}% — {fav_ci[1]:.1f}%] |
 | **Contrário** | {metrics_full.raw_contaminated_volume_pct['Contrario']:.1f}% *(Inflado por CIB)* | **{metrics_full.scenario_1_organic_unweighted_pct['Contrario']:.1f}%** | {metrics_full.rogan_gladen_corrected_c1_pct['Contrario']:.1f}% | **{metrics_full.scenario_2_equal_platform_pct['Contrario']:.1f}%** | **{metrics_full.scenario_3_reweighted_sensitivity_pct['Contrario']:.1f}%** | [{con_ci[0]:.1f}% — {con_ci[1]:.1f}%] |
 | **Neutro** | {metrics_full.raw_contaminated_volume_pct['Neutro']:.1f}% | **{metrics_full.scenario_1_organic_unweighted_pct['Neutro']:.1f}%** | {metrics_full.rogan_gladen_corrected_c1_pct['Neutro']:.1f}% | **{metrics_full.scenario_2_equal_platform_pct['Neutro']:.1f}%** | **{metrics_full.scenario_3_reweighted_sensitivity_pct['Neutro']:.1f}%** | [{neu_ci[0]:.1f}% — {neu_ci[1]:.1f}%] |
 
-*Status de Calibração do Cenário 3:* **`{metrics_full.scenario_3_calibration_status}`** (Gap máximo absoluto pós-trimming $[0,25; 4,00]$ = `{metrics_full.scenario_3_max_margin_gap_pp} p.p.`).
+*Status de Calibração do Cenário 3:* **`{metrics_full.scenario_3_calibration_status}`** (Gap máximo absoluto pós-trimming $[0,25; 4,00]$ = `{metrics_full.scenario_3_max_margin_gap_pp} p.p.`).  
+*Status da Correção Rogan-Gladen:* **`{metrics_full.rogan_gladen_status}`** (Parâmetros ilustrativos de sensibilidade/especificidade sem matriz de validação empírica na Fase 01; calibração com anotação humana padrão-ouro prevista para a Fase 05).
 
 ---
 
@@ -354,8 +360,18 @@ def run_audited_pilot_verification(sync_to_cloud: bool = True) -> None:
 
     reports_folder_id = os.environ.get("GDRIVE_RELATORIOS_DX_FOLDER_ID") if backend_mode == "gdrive" else "local_repro"
     print(f"5. Sincronizando artefatos via ZeroFootprintStorage (modo={backend_mode}) com verificacao de integridade...")
-    up1 = storage.upload_and_purge(parquet_path)
-    up2 = storage.upload_and_purge(report_path, reports_folder_id)
+    try:
+        up1 = storage.upload_and_purge(parquet_path)
+        up2 = storage.upload_and_purge(report_path, reports_folder_id)
+    except Exception as exc:
+        if any(msg in str(exc).lower() for msg in ("needs authentication", "not signed in", "oauth2")):
+            print(f"   [AVISO] Google Drive pendente de login no CLI ({exc}). Concluindo sincronizacao em modo local_repro...")
+            fallback_storage = ZeroFootprintStorage(backend_mode="local_repro")
+            up1 = fallback_storage.upload_and_purge(parquet_path)
+            up2 = fallback_storage.upload_and_purge(report_path, "local_repro")
+            storage = fallback_storage
+        else:
+            raise
     storage.clear_all_cache()
     print(f"   -> {up1}")
     print(f"   -> {up2}")

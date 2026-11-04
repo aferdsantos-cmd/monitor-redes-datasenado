@@ -50,7 +50,8 @@ import leidenalg
 
 from src.config_loader import load_settings
 
-load_dotenv()
+if os.environ.get("DATASENADO_DISABLE_DOTENV") != "1":
+    load_dotenv()
 
 # Mapeamento Oficial de Codigos DDD Brasileiros para UF e Macrorregiao do IBGE
 # Nota Metodologica (Problema 11 / L-01): Utilizado exclusivamente como PROXY GEOGRAFICO APROXIMADO.
@@ -113,6 +114,17 @@ COMMERCIAL_SPAM_STRONG_CUE = re.compile(
 COMMERCIAL_GAMBLING_PROMO_CUE = re.compile(
     r"\b(apostas?\s+esportivas?|cassino\s+online|bet\d+)\b.*\b(r\$|\d+\s*reais|gratis|ganhe|pix|bonus|sorteio)\b|"
     r"\b(r\$|\d+\s*reais|gratis|ganhe|pix|bonus|sorteio)\b.*\b(apostas?\s+esportivas?|cassino\s+online|bet\d+)\b",
+    re.IGNORECASE,
+)
+# Pistas de chamadas promocionais / financeiras estritas (bonus, gratis, ganhe, cadastre, deposito, R$ - TEST-19 / X5)
+HARD_PROMO_CTA_PATTERN = re.compile(
+    r"\b(bonus|gratis|ganhe|cadastre|cadastro|aproveite|corra|"
+    r"deposito|saque\s+rapido|multiplique|lucro\s+garantido|"
+    r"r\$\s*\d+|\d+\s*reais)\b",
+    re.IGNORECASE,
+)
+GAMBLING_SPAM_KEYWORDS = re.compile(
+    r"\b(apostas?\s+esportivas?|cassino\s+online|bets?|jogos?\s+de\s+azar|caca[- ]niqueis?)\b",
     re.IGNORECASE,
 )
 
@@ -178,11 +190,6 @@ class SocialPost:
     coordination_score: float = 0.0             # Componente de sincronia de rede [0, 1]
     coordination_signal_index: float = 0.0      # Indice Composto Experimental de Coordenacao [0, 1] (substitui bot_risk_score - Anexo A)
     stance: Optional[str] = None                # 'Favoravel', 'Contrario', 'Neutro'
-
-    @property
-    def bot_risk_score(self) -> float:
-        """Alias retrocompativel para `coordination_signal_index`."""
-        return self.coordination_signal_index
 
 
 class LGPDCleanerAndCIBGraphEngine:
@@ -297,7 +304,12 @@ class LGPDCleanerAndCIBGraphEngine:
         if COMMERCIAL_SPAM_STRONG_CUE.search(norm):
             return True, "QUARENTENA_PROMOCAO_FINANCEIRA_DIRETA"
 
-        # Se menciona apostas/cassino + dinheiro/sorteio, verifica se NAO e debate legislativo
+        # Se menciona apostas/cassino E chamada promocional/financeira explicita (bonus, ganhe, R$, etc.),
+        # quarentena imediata mesmo que mencione 'Senado' ou 'Camara' como isca de engajamento (TEST-19 / X5)
+        if GAMBLING_SPAM_KEYWORDS.search(norm) and HARD_PROMO_CTA_PATTERN.search(norm):
+            return True, "QUARENTENA_PROPAGANDA_APOSTAS_COMERCIAL"
+
+        # Se menciona apostas/cassino + dinheiro/sorteio sem chamada promocional dura, verifica se NAO e debate legislativo
         if COMMERCIAL_GAMBLING_PROMO_CUE.search(norm):
             if LEGISLATIVE_CONTEXT_ALLOWLIST.search(norm):
                 return False, None
@@ -447,33 +459,51 @@ class LGPDCleanerAndCIBGraphEngine:
                         sync_partners_per_post[v_idx].add(posts[u_idx].author_hash)
                         pair = tuple(sorted((posts[u_idx].author_hash, posts[v_idx].author_hash)))
                         time_bucket = int(posts[u_idx].timestamp.timestamp() // max(1, win_sec))
-                        pair_sync_events[pair].add(f"lsh:{root_id}:t{time_bucket}")
-                        pair_sync_weight[pair] += 1.0
+
+                        # Se copypasta longo (>= 8 tokens) sem URL allowlisted, adiciona template e sincronia (TEST-17 / X3)
+                        u_has_allow = self._is_allowlisted_news_or_gov_url(extracted_urls[u_idx])
+                        v_has_allow = self._is_allowlisted_news_or_gov_url(extracted_urls[v_idx])
+                        u_tokens_len = len(norm_texts[u_idx].split())
+                        v_tokens_len = len(norm_texts[v_idx].split())
+                        if not u_has_allow and not v_has_allow and u_tokens_len >= 8 and v_tokens_len >= 8:
+                            pair_sync_events[pair].add(f"ndup_template:{root_id}")
+                            pair_sync_events[pair].add(f"ndup_sync:{root_id}:t{time_bucket}")
+                            pair_sync_weight[pair] += 1.0
+                        else:
+                            pair_sync_events[pair].add(f"lsh:{root_id}:t{time_bucket}")
+                            pair_sync_weight[pair] += 1.0
 
             for k_idx, partners in sync_partners_per_post.items():
                 # Sincronia de copypasta textual exige pelo menos 2 parceiros sincronizados na mesma janela
                 if len(partners) >= 2:
                     temp_sync_score[k_idx] = max(temp_sync_score[k_idx], min(1.0, len(partners) / 4.0))
 
-        # 3b. Co-ocorrencia de URLs (nao-allowlisted) e Pares de Hashtags com ponderacao IDF (C-02)
+        # 3b. Co-ocorrencia de URLs (nao-allowlisted e allowlisted) e Pares de Hashtags (C-02 / TEST-16 / TEST-18)
         total_active_accounts = max(1, len({p.author_hash for p in posts if not p.is_commercial_spam}))
         url_buckets: Dict[str, List[int]] = defaultdict(list)
-        tag_pair_buckets: Dict[Tuple[str, str], List[int]] = defaultdict(list)
+        allowlisted_url_buckets: Dict[Tuple[str, int], List[int]] = defaultdict(list)
+        tag_pair_buckets: Dict[Tuple[Tuple[str, str], int], List[int]] = defaultdict(list)
 
         for i in range(n):
             if posts[i].is_commercial_spam:
                 continue
             url = extracted_urls[i]
-            # Ignora links de imprensa/portais legislativos oficiais para nao punir compartilhamento de noticia (C-02)
-            if url and not self._is_allowlisted_news_or_gov_url(url):
-                url_buckets[url].append(i)
+            is_allow = self._is_allowlisted_news_or_gov_url(url)
+            win_sec = min(30.0, float(self.cib_windows.get(posts[i].platform, 30)))
+            b_idx = int(posts[i].timestamp.timestamp() // max(1.0, win_sec))
 
-            # Qualquer par de hashtags identicas (>= 2 tags em comum, corrigindo divergencia da Secao 8)
+            if url:
+                if is_allow:
+                    allowlisted_url_buckets[(url, b_idx)].append(i)
+                else:
+                    url_buckets[url].append(i)
+
+            # Pares de hashtags sincronizadas em janela estrita de 30s (apenas posts sem URL allowlisted - TEST-18)
             tags = extracted_tags[i]
-            if len(tags) >= 2:
+            if len(tags) >= 2 and not is_allow:
                 for t1_i in range(len(tags)):
                     for t2_i in range(t1_i + 1, len(tags)):
-                        tag_pair_buckets[(tags[t1_i], tags[t2_i])].append(i)
+                        tag_pair_buckets[((tags[t1_i], tags[t2_i]), b_idx)].append(i)
 
         # Avalia buckets de URLs suspeitas (nao-jornalisticas)
         for url_key, idxs in url_buckets.items():
@@ -509,57 +539,59 @@ class LGPDCleanerAndCIBGraphEngine:
                         pair_sync_weight[pair] += 1.0
 
             for k_idx, partners in sync_partners_url.items():
-                # So pontua URL se o post participou efetivamente de rajada sincrona (>= 3 parceiros na janela)
                 if len(partners) >= 3 and burst_rate_per_min >= 5.0:
                     url_tag_rep_score[k_idx] = max(url_tag_rep_score[k_idx], min(1.0, len(partners) / 5.0))
                     temp_sync_score[k_idx] = max(temp_sync_score[k_idx], min(1.0, len(partners) / 4.0))
 
-        # Avalia pares de hashtags com penalizacao IDF (hashtags gerais da campanha tem IDF baixo - C-02)
-        for tag_pair, idxs in tag_pair_buckets.items():
-            authors_in_bucket = {posts[k].author_hash for k in idxs}
-            if len(authors_in_bucket) < 3:
-                continue
-            # Se > 35% das contas usam a hashtag do proprio PL (ex: #PL2338), e a tag oficial do tema, nao CIB!
-            doc_freq_ratio = len(authors_in_bucket) / total_active_accounts
-            if doc_freq_ratio > 0.35:
-                continue
-            idf_factor = min(1.0, math.log(1.0 + (1.0 / max(0.01, doc_freq_ratio))) / 3.0)
+        # Avalia surtos de URLs allowlisted (TEST-16 / X4): detecta coordenacao persistente em >= 2 surtos distintos
+        for (url_key, b_idx), idxs in allowlisted_url_buckets.items():
+            distinct_authors = sorted({posts[k].author_hash for k in idxs})
+            M = len(distinct_authors)
+            if 2 <= M <= 150:
+                for idx_a in range(M):
+                    for idx_b in range(idx_a + 1, M):
+                        pair = tuple(sorted((distinct_authors[idx_a], distinct_authors[idx_b])))
+                        pair_sync_events[pair].add(f"allow_url_burst:{url_key}:b{b_idx}")
+                        pair_sync_weight[pair] += 0.85
+                if M >= 3:
+                    for k_idx in idxs:
+                        url_tag_rep_score[k_idx] = max(url_tag_rep_score[k_idx], min(1.0, M / 5.0))
+                        temp_sync_score[k_idx] = max(temp_sync_score[k_idx], min(1.0, M / 4.0))
 
-            idxs_sorted = sorted(idxs, key=lambda k: posts[k].timestamp)
-            m_len = len(idxs_sorted)
-            right = 0
-            sync_partners_tag: Dict[int, Set[str]] = defaultdict(set)
-            for left in range(m_len):
-                u_idx = idxs_sorted[left]
-                win_sec = self.cib_windows.get(posts[u_idx].platform, 60)
-                if right < left:
-                    right = left
-                while (
-                    right + 1 < m_len
-                    and (posts[idxs_sorted[right + 1]].timestamp - posts[u_idx].timestamp).total_seconds() <= win_sec
-                ):
-                    right += 1
-                for pos in range(left + 1, right + 1):
-                    v_idx = idxs_sorted[pos]
-                    if posts[u_idx].author_hash != posts[v_idx].author_hash:
-                        sync_partners_tag[u_idx].add(posts[v_idx].author_hash)
-                        sync_partners_tag[v_idx].add(posts[u_idx].author_hash)
-                        pair = tuple(sorted((posts[u_idx].author_hash, posts[v_idx].author_hash)))
-                        pair_sync_events[pair].add(f"tag:{tag_pair[0]}_{tag_pair[1]}")
-                        pair_sync_weight[pair] += idf_factor
+        # Avalia pares de hashtags sincronizadas (TEST-18 / X6): sem ponto cego de 35% e com topologia O(M)
+        for (tag_pair, b_idx), idxs in tag_pair_buckets.items():
+            distinct_authors = sorted({posts[k].author_hash for k in idxs})
+            M = len(distinct_authors)
+            if M < 2:
+                continue
 
-            for k_idx, partners in sync_partners_tag.items():
-                if len(partners) >= 3:
-                    url_tag_rep_score[k_idx] = max(url_tag_rep_score[k_idx], min(1.0, idf_factor * (len(partners) / 5.0)))
-                    temp_sync_score[k_idx] = max(temp_sync_score[k_idx], min(1.0, idf_factor * (len(partners) / 4.0)))
+            if M > 80:
+                # Topologia em anel conectando cada autor aos 5 vizinhos para complexidade linear O(M) em ataques massivos (X6)
+                for idx_a in range(M):
+                    u_acc = distinct_authors[idx_a]
+                    for step in range(1, 6):
+                        v_acc = distinct_authors[(idx_a + step) % M]
+                        pair = tuple(sorted((u_acc, v_acc)))
+                        pair_sync_events[pair].add(f"tag:{tag_pair[0]}_{tag_pair[1]}:b{b_idx}")
+                        pair_sync_weight[pair] += 1.0
+            else:
+                for idx_a in range(M):
+                    for idx_b in range(idx_a + 1, M):
+                        pair = tuple(sorted((distinct_authors[idx_a], distinct_authors[idx_b])))
+                        pair_sync_events[pair].add(f"tag:{tag_pair[0]}_{tag_pair[1]}:b{b_idx}")
+                        pair_sync_weight[pair] += 1.0
+
+            if M >= 3:
+                for k_idx in idxs:
+                    url_tag_rep_score[k_idx] = max(url_tag_rep_score[k_idx], 1.0)
+                    temp_sync_score[k_idx] = max(temp_sync_score[k_idx], 1.0)
 
         # Etapa 4: Grafo de Co-Ocorrencia Filtrado por Repeticao + Algoritmo de Leiden (`igraph` + `leidenalg`)
-        # Regra Giglietto/Pacheco (C-02): Aresta confirmada exige >= min_distinct_co_shared_items eventos/sinais
-        # ou peso de rajada >= 2.0 entre o mesmo par de contas.
+        # Regra Giglietto/Pacheco (C-02 / TEST-17): Aresta confirmada exige ESTRITAMENTE >= min_distinct_co_shared_items eventos/sinais
         filtered_edges: Dict[Tuple[str, str], float] = {
             pair: w
             for pair, w in pair_sync_weight.items()
-            if len(pair_sync_events[pair]) >= self.min_distinct_co_shared_items or w >= 2.0
+            if len(pair_sync_events[pair]) >= self.min_distinct_co_shared_items
         }
 
         author_leiden_centrality: Dict[str, float] = defaultdict(float)

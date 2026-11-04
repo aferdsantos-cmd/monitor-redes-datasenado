@@ -15,7 +15,7 @@ Atende integralmente aos criterios da 2a Rodada de Auditoria Cientifica (C-01, E
 
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 import math
 import random
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -41,10 +41,13 @@ class OrganicAccountSampleUnit:
 
 
 def to_brazil_timezone(ts: datetime, tz_name: str = "America/Sao_Paulo") -> datetime:
-    """Converte timestamps ingenuos (assumidos UTC ou local) ou com fuso para America/Sao_Paulo (E-06)."""
+    """
+    Converte timestamps ingenuos (assumidos como UTC padrao de APIs de coleta)
+    ou com fuso arbitrario para o horario oficial de Brasilia (America/Sao_Paulo).
+    """
     target_tz = ZoneInfo(tz_name)
     if ts.tzinfo is None:
-        return ts.replace(tzinfo=target_tz)
+        ts = ts.replace(tzinfo=timezone.utc)
     return ts.astimezone(target_tz)
 
 
@@ -151,6 +154,16 @@ class ObservedUniverseStratifiedSampler:
                     stances=stances_list,
                 )
             )
+
+        # Colapso hierarquico automatico de estratos (Stratum Collapsing - Cochran, 1977 - X8 / TEST-22)
+        # Se o numero de estratos finos Platform|Turno|Dia for excessivo ou o intervalo for longitudinal (> 7 dias ou H > 60),
+        # colapsa para Platform|Turno (no maximo 24 estratos) para assegurar pi_i > 0 para todas as unidades.
+        raw_strata = {u.stratum_key for u in units}
+        unique_days = len({u.modal_day_str for u in units})
+        if len(raw_strata) > 60 or unique_days > 7:
+            for u in units:
+                u.stratum_key = f"{u.platform}|{u.modal_time_stratum}"
+
         return units
 
     @staticmethod
@@ -162,10 +175,53 @@ class ObservedUniverseStratifiedSampler:
         """
         Calcula a alocacao inteira exata por estrato (Proporcional ou de Neyman) usando o
         Metodo do Maior Resto de Hamilton, garantindo matematicamente que sum(n_h) == target_n (E-06).
+        Se target_n >= numero de estratos ativos, assegura piso minimo n_h >= 1 para pi_i > 0 (TEST-22).
         """
         total_N = sum(stratum_sizes.values())
         if target_n >= total_N:
             return dict(stratum_sizes)
+
+        H = len(stratum_sizes)
+        # Quando target_n >= H, garante piso minimo de 1 unidade por estrato (X8 / TEST-22)
+        if target_n >= H and H > 0:
+            alloc: Dict[str, int] = {k: 1 for k in stratum_sizes}
+            remaining_n = target_n - H
+            if remaining_n == 0:
+                return alloc
+
+            rem_sizes = {k: max(0, N_h - 1) for k, N_h in stratum_sizes.items()}
+            total_rem = sum(rem_sizes.values())
+            if total_rem == 0:
+                return alloc
+
+            weights: Dict[str, float] = {}
+            for k, N_rem in rem_sizes.items():
+                sd_h = stratum_std_devs.get(k, 0.5) if stratum_std_devs else 1.0
+                weights[k] = N_rem * max(1e-6, sd_h)
+            total_w = sum(weights.values())
+
+            quotas: Dict[str, float] = {k: remaining_n * (weights[k] / total_w) for k in stratum_sizes}
+            remainders: List[Tuple[float, str]] = []
+
+            for k, q in quotas.items():
+                add_floor = min(rem_sizes[k], int(math.floor(q)))
+                alloc[k] += add_floor
+                rem = q - add_floor if alloc[k] < stratum_sizes[k] else -1.0
+                remainders.append((rem, k))
+
+            deficit = target_n - sum(alloc.values())
+            remainders.sort(key=lambda x: (-x[0], x[1]))
+
+            idx = 0
+            while deficit > 0 and idx < len(remainders):
+                _, k = remainders[idx]
+                if alloc[k] < stratum_sizes[k]:
+                    alloc[k] += 1
+                    deficit -= 1
+                idx = (idx + 1) if idx + 1 < len(remainders) else 0
+                if all(alloc[key] >= stratum_sizes[key] for key in stratum_sizes):
+                    break
+            return alloc
 
         weights: Dict[str, float] = {}
         for k, N_h in stratum_sizes.items():
@@ -178,7 +234,6 @@ class ObservedUniverseStratifiedSampler:
         remainders: List[Tuple[float, str]] = []
 
         for k, q in quotas.items():
-            # Garante pelo menos 1 se target_n >= numero de estratos e N_h >= 1
             floor_q = min(stratum_sizes[k], int(math.floor(q)))
             alloc[k] = floor_q
             rem = q - floor_q if alloc[k] < stratum_sizes[k] else -1.0

@@ -59,11 +59,7 @@ class PlatformHomogeneityTestResult:
     cramers_v_effect_size: float
     statistically_significant_95: bool
     interpretation: str
-
-    @property
-    def rao_scott_f_or_chi2(self) -> float:
-        """Alias retrocompativel para scripts de auditoria."""
-        return self.adjusted_chi2
+    design_adjusted_cramers_v: float = 0.0
 
 
 @dataclass
@@ -98,6 +94,7 @@ class StatisticalReportMetrics:
     confidence_intervals_95_pct: Dict[str, Tuple[float, float]]
     platform_divergence_test: PlatformHomogeneityTestResult
     tie_breaking_sensitivity_pct: Dict[str, Dict[str, float]] = field(default_factory=dict)
+    rogan_gladen_status: str = "SIMULACAO_ILUSTRATIVA_SEM_PADRAO_OURO_FASE01"
 
     # Propriedades retrocompativeis com scripts anteriores e `audit_probe.py`
     @property
@@ -167,11 +164,27 @@ class DigitalDiscourseStatisticalEngine:
         self.default_bootstrap_iterations = int(stat_cfg["bootstrap_iterations"])
         self.bootstrap_chunk_size = int(stat_cfg.get("bootstrap_chunk_size", 500))
         self.expected_deff = float(stat_cfg.get("expected_design_effect_deff", 1.50))
+        self.random_seed: int = int(stat_cfg.get("random_seed", 42))
 
         # Status da ultima execucao do Raking IPF
         self.last_calibration_status: str = "NAO_EXECUTADO"
         self.last_max_margin_gap: float = 0.0
         self.last_margins_table: Dict[str, Dict[str, float]] = {}
+
+    @staticmethod
+    def compute_kish_design_effect(weights: Any) -> float:
+        """Calcula o Efeito de Desenho (DEFF) de Kish (1965): n * sum(w^2) / (sum(w))^2."""
+        w = np.asarray(weights, dtype=float)
+        n = len(w)
+        if n == 0:
+            return 1.0
+        sum_w = float(np.sum(w))
+        sum_w2 = float(np.sum(w**2))
+        if sum_w <= 0:
+            return 1.0
+        return float((n * sum_w2) / (sum_w**2))
+
+    _compute_kish_design_effect = compute_kish_design_effect
 
     @staticmethod
     def operational_cochran_sample_size(
@@ -214,6 +227,36 @@ class DigitalDiscourseStatisticalEngine:
         if tot <= 0:
             return dict(observed_proportions)
         return {k: round((v / tot) * 100.0, 2) for k, v in raw_corrected.items()}
+
+    @staticmethod
+    def rogan_gladen_multiclass_matrix_correction(
+        observed_proportions: Dict[str, float],
+        confusion_matrix: Any,
+        categories: Optional[List[str]] = None,
+    ) -> Dict[str, float]:
+        """
+        Inversao matricial multiclasse de Rogan & Gladen (1978) - TEST-20 / X6:
+        theta_tilde = C^{-1} * p_hat, truncado em [0, 1] e renormalizado no simplex.
+        """
+        cats = categories or list(observed_proportions.keys())
+        p_vec = np.array([observed_proportions.get(c, 0.0) / 100.0 for c in cats], dtype=float)
+        if isinstance(confusion_matrix, dict):
+            C = np.array([[confusion_matrix.get(true_c, {}).get(pred_c, 0.0) for true_c in cats] for pred_c in cats], dtype=float)
+        else:
+            C = np.array(confusion_matrix, dtype=float)
+
+        try:
+            theta_tilde = np.linalg.solve(C, p_vec)
+        except np.linalg.LinAlgError:
+            theta_tilde = p_vec
+
+        theta_tilde = np.clip(theta_tilde, 0.0, 1.0)
+        s = np.sum(theta_tilde)
+        if s > 0:
+            theta_tilde /= s
+        else:
+            theta_tilde = p_vec
+        return {cats[i]: round(float(theta_tilde[i]) * 100.0, 2) for i in range(len(cats))}
 
     def _resolve_deterministic_modal_stance(self, stances: List[str], mode: str = "neutral_tie") -> str:
         """
@@ -430,9 +473,10 @@ class DigitalDiscourseStatisticalEngine:
         dof = (len(unique_plats) - 1) * (len(unique_cats) - 1)
         p_val = float(1.0 - chi2.cdf(adj_chi2, df=dof))
 
-        # Tamanho de efeito V de Cramer: sqrt(chi2 / (N * min(R-1, C-1)))
+        # Tamanho de efeito V de Cramer canonico (sobre Pearson Chi2) e ajustado pelo desenho (TEST-24)
         min_dim = max(1, min(len(unique_plats) - 1, len(unique_cats) - 1))
-        cramers_v = math.sqrt(max(0.0, adj_chi2 / (max(1.0, total_n) * min_dim)))
+        cramers_v = math.sqrt(max(0.0, pearson_chi2 / (max(1.0, total_n) * min_dim)))
+        design_adjusted_v = math.sqrt(max(0.0, adj_chi2 / (max(1.0, total_n) * min_dim)))
 
         # Testes post-hoc por categoria (1 vs resto) com correcao de Holm-Bonferroni (E-09)
         cat_raw_p: Dict[str, float] = {}
@@ -462,9 +506,12 @@ class DigitalDiscourseStatisticalEngine:
             p_value=round(p_val, 4),
             holm_corrected_p_values_by_category=holm_p,
             cramers_v_effect_size=round(cramers_v, 3),
+            design_adjusted_cramers_v=round(design_adjusted_v, 3),
             statistically_significant_95=sig,
             interpretation=interp,
         )
+
+    compute_platform_homogeneity_test = platform_homogeneity_chi2_test
 
     def _stratified_chunked_bootstrap_ci(
         self,
@@ -474,10 +521,12 @@ class DigitalDiscourseStatisticalEngine:
         bootstrap_iterations: int,
         chunk_size: int,
         random_seed: int,
+        fpc_scale: float = 1.0,
     ) -> Dict[str, Tuple[float, float]]:
         """
         Bootstrap nao parametrico estratificado de contas processado em *chunks* (lotes de memoria),
         evitando alocacao O(B * n) gigante (resolve E-03 e G-05!).
+        Aplica contracao por FPC quando sub-amostrado sobre populacao finita U_Org (TEST-21 / X7).
         """
         n = len(stances_np)
         rng = np.random.default_rng(random_seed)
@@ -513,9 +562,12 @@ class DigitalDiscourseStatisticalEngine:
                 replicates_by_cat[cat].append(means_chunk)
 
         ci_95: Dict[str, Tuple[float, float]] = {}
+        w_sum_orig = float(np.sum(weights))
         for cat in self.categories:
             all_reps = np.concatenate(replicates_by_cat[cat])
-            low, high = np.percentile(all_reps, [2.5, 97.5])
+            point_est = float(np.sum(weights * cat_indicators[cat]) / max(1e-9, w_sum_orig) * 100.0)
+            adjusted_reps = point_est + fpc_scale * (all_reps - point_est)
+            low, high = np.percentile(adjusted_reps, [2.5, 97.5])
             ci_95[cat] = (round(float(low), 2), round(float(high), 2))
 
         return ci_95
@@ -688,19 +740,25 @@ class DigitalDiscourseStatisticalEngine:
             scen3_pct[cat] = round(float(np.sum(raking_weights * ind) / sum_w * 100.0), 2)
 
         # Incerteza estatistica interna (com correcao para populacao finita FPC quando sub-amostrado de U_Org,
-        # acrescida da incerteza do bootstrap sob superpopulacao estocastica - C-01 / E-05)
-        fpc_factor = max(0.0, 1.0 - (n_sampled_accounts / total_N_org)) if n_sampled_accounts < total_N_org else 1.0
+        # acrescida da incerteza do bootstrap sob superpopulacao estocastica - C-01 / E-05 / TEST-21)
+        if total_N_org > 0 and n_sampled_accounts <= total_N_org:
+            fpc_factor = max(0.0, 1.0 - (n_sampled_accounts / total_N_org))
+        else:
+            fpc_factor = 0.0
+
         internal_uncertainty_pp = round(
             self.confidence_z * math.sqrt((0.25 * fpc_factor) / max(1.0, n_eff)) * 100.0,
             2,
         )
 
         # 5. Bootstrap Nao Parametrico Estratificado de Contas em Chunks (E-03 / G-05)
+        # No Cenario 1 sobre populacao finita U_Org, aplica contracao por FPC (TEST-21 / X7)
+        c1_fpc_scale = math.sqrt(fpc_factor)
         ci_95_c1 = self._stratified_chunked_bootstrap_ci(
-            obs_platforms, stances_np, design_weights, b_iters, self.bootstrap_chunk_size, random_seed
+            obs_platforms, stances_np, design_weights, b_iters, self.bootstrap_chunk_size, random_seed, fpc_scale=c1_fpc_scale
         )
         ci_95_c3 = self._stratified_chunked_bootstrap_ci(
-            obs_platforms, stances_np, raking_weights, b_iters, self.bootstrap_chunk_size, random_seed
+            obs_platforms, stances_np, raking_weights, b_iters, self.bootstrap_chunk_size, random_seed, fpc_scale=1.0
         )
 
         # 6. Teste de Homogeneidade Inter-Plataformas (sem pesos marginais de plataforma + V de Cramer + Holm - E-04/E-09)
@@ -733,4 +791,97 @@ class DigitalDiscourseStatisticalEngine:
             confidence_intervals_95_pct=ci_95_c3,
             platform_divergence_test=homog_test,
             tie_breaking_sensitivity_pct=tie_sensitivity,
+            rogan_gladen_status="SIMULACAO_ILUSTRATIVA_SEM_PADRAO_OURO_FASE01",
         )
+
+    def paired_bootstrap_clean_vs_raw_test(
+        self,
+        raw_records: List[Dict[str, Any]],
+        target_category: str = "CONTRA",
+        n_boot: int = 1000,
+        random_seed: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """
+        Teste de Hipotese H1 via Bootstrap Pareado por Conta (TEST-26):
+        Testa H1: |p_bruto - p_c1| > 0 sobre a mesma massa observada, respeitando
+        a dependencia amostral estrita entre o volume bruto e o subconjunto limpo.
+        """
+        seed = random_seed if random_seed is not None else self.random_seed
+        rng = np.random.default_rng(seed)
+
+        author_groups: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+        for r in raw_records:
+            acc = r.get("author_hash") or r.get("author_id") or r.get("raw_author_id") or "anon"
+            author_groups[acc].append(r)
+
+        unique_authors = list(author_groups.keys())
+        n_authors = len(unique_authors)
+        if n_authors == 0:
+            return {
+                "point_p_raw": 0.0,
+                "point_p_c1": 0.0,
+                "point_delta": 0.0,
+                "ci_95": (0.0, 0.0),
+                "se": 0.0,
+                "p_value": 1.0,
+                "h1_confirmed_at_5pp": False,
+            }
+
+        def _calc_proportions(author_list: List[str]) -> Tuple[float, float]:
+            tot_raw = 0
+            raw_target = 0
+            c1_accounts = 0
+            c1_target = 0
+
+            for acc in author_list:
+                posts = author_groups[acc]
+                for p in posts:
+                    if not p.get("is_commercial_spam", False):
+                        tot_raw += 1
+                        st = (p.get("stance") or "").upper()
+                        if target_category.upper() in st:
+                            raw_target += 1
+
+                is_cib = any(
+                    p.get("account_suspected_cib")
+                    or p.get("suspected_coordination")
+                    or p.get("activity_class") == "Suspeita_CIB_Automacao"
+                    for p in posts
+                )
+                non_spam_posts = [p for p in posts if not p.get("is_commercial_spam", False)]
+                if not is_cib and non_spam_posts:
+                    c1_accounts += 1
+                    st_list = [p.get("stance", "") for p in non_spam_posts if p.get("stance")]
+                    if st_list:
+                        modal_st = Counter(st_list).most_common(1)[0][0].upper()
+                        if target_category.upper() in modal_st:
+                            c1_target += 1
+
+            p_raw = (raw_target / tot_raw * 100.0) if tot_raw > 0 else 0.0
+            p_c1 = (c1_target / c1_accounts * 100.0) if c1_accounts > 0 else 0.0
+            return p_raw, p_c1
+
+        point_p_raw, point_p_c1 = _calc_proportions(unique_authors)
+        point_delta = point_p_c1 - point_p_raw
+
+        delta_reps = np.empty(n_boot, dtype=float)
+        authors_arr = np.array(unique_authors, dtype=object)
+
+        for b in range(n_boot):
+            sampled_accs = rng.choice(authors_arr, size=n_authors, replace=True).tolist()
+            b_raw, b_c1 = _calc_proportions(sampled_accs)
+            delta_reps[b] = b_c1 - b_raw
+
+        ci_low, ci_high = np.percentile(delta_reps, [2.5, 97.5])
+        se_delta = float(np.std(delta_reps, ddof=1)) if n_boot > 1 else 0.0
+        p_val = float(np.mean(np.abs(delta_reps - np.mean(delta_reps)) >= np.abs(point_delta)))
+
+        return {
+            "point_p_raw": round(point_p_raw, 2),
+            "point_p_c1": round(point_p_c1, 2),
+            "point_delta": round(point_delta, 2),
+            "ci_95": (round(float(ci_low), 2), round(float(ci_high), 2)),
+            "se": round(se_delta, 3),
+            "p_value": round(p_val, 4),
+            "h1_confirmed_at_5pp": bool(abs(point_delta) >= 5.0 and (ci_low > 0 or ci_high < 0)),
+        }

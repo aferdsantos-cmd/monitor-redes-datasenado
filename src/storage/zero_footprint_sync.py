@@ -21,15 +21,18 @@ import json
 import logging
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
+import time
 from typing import Optional
 
 from dotenv import load_dotenv
 
 from src.config_loader import load_settings
 
-load_dotenv()
+if os.environ.get("DATASENADO_DISABLE_DOTENV") != "1":
+    load_dotenv()
 
 logger = logging.getLogger(__name__)
 
@@ -85,9 +88,18 @@ class ZeroFootprintStorage:
     def get_temp_path(self, filename: str) -> Path:
         """Retorna um caminho temporario seguro em /tmp, verificando o teto de cache (G-10)."""
         used_mb = self._current_cache_size_mb()
-        if used_mb > self.max_cache_mb:
-            logger.warning("Cache temporario (%.1f MB) excedeu o teto de %.1f MB; limpando...", used_mb, self.max_cache_mb)
-            self.clear_all_cache()
+        if used_mb >= 0.85 * self.max_cache_mb:
+            logger.warning("Cache temporario (%.1f MB) atingiu 85%% do teto de %.1f MB; limpando orfaos...", used_mb, self.max_cache_mb)
+            now = time.time()
+            for f in TRANSITORY_CACHE_DIR.rglob("*"):
+                if f.is_file() and (now - f.stat().st_mtime) > 300:
+                    try:
+                        f.unlink(missing_ok=True)
+                    except OSError:
+                        pass
+            used_mb = self._current_cache_size_mb()
+            if used_mb > self.max_cache_mb:
+                raise MemoryError("Limite Zero-Footprint de 250 MB excedido no cache temporario.")
         return TRANSITORY_CACHE_DIR / filename
 
     def _find_existing_file_id(self, filename: str, parent_folder_id: str) -> Optional[str]:
@@ -121,14 +133,25 @@ class ZeroFootprintStorage:
             raise RuntimeError(f"Resposta JSON invalida do gdrive CLI: {exc}") from exc
         return None
 
-    def _verify_remote_file_integrity(self, remote_file_id: str, expected_min_bytes: int) -> None:
-        """Confirma que o arquivo remoto existe no Google Drive antes do expurgo local (G-07)."""
+    def _verify_remote_file_integrity(self, remote_file_id: str, expected_min_bytes: int = 16) -> None:
+        """Confirma que o arquivo remoto existe no Google Drive e atende ao tamanho minimo esperado (G-07)."""
         cmd = [self.gdrive_bin, "readonly", "info", remote_file_id]
         res = subprocess.run(cmd, capture_output=True, text=True, check=False)
         if res.returncode != 0 or not res.stdout.strip():
             raise RuntimeError(
                 f"Verificacao de integridade pos-upload falhou para ID={remote_file_id}: {res.stderr.strip()}"
             )
+        out_text = res.stdout
+        size_match = re.search(r"Size:\s*([0-9.]+)\s*([A-Za-z]+)", out_text)
+        if size_match:
+            val, unit = float(size_match.group(1)), size_match.group(2).upper()
+            mult = {"B": 1, "KB": 1024, "MB": 1024**2, "GB": 1024**3}.get(unit, 1)
+            remote_bytes = val * mult
+            if remote_bytes < expected_min_bytes:
+                raise RuntimeError(
+                    f"Integridade remota violada: tamanho retornado ({remote_bytes} bytes) "
+                    f"inferior ao minimo esperado ({expected_min_bytes} bytes)."
+                )
 
     def upload_and_purge(self, local_file: Path, parent_folder_id: Optional[str] = None) -> str:
         """
@@ -165,13 +188,17 @@ class ZeroFootprintStorage:
             result = subprocess.run(cmd, capture_output=True, text=True, check=True)
             output_msg = result.stdout.strip()
 
-            # Verifica integridade remota antes de apagar o arquivo local (G-07)
+            # Verifica integridade remota antes de apagar o arquivo local (G-07 / TEST-29)
             verify_id = existing_id
             if not verify_id and "ID:" in output_msg:
                 verify_id = output_msg.split("ID:")[-1].strip().rstrip(")")
-            if verify_id:
-                self._verify_remote_file_integrity(verify_id, local_size)
+            if not verify_id:
+                verify_id = self._find_existing_file_id(local_file.name, target_folder)
 
+            if not verify_id:
+                raise RuntimeError(f"Falha ao obter ID remoto para verificacao de {local_file.name}")
+
+            self._verify_remote_file_integrity(verify_id, expected_min_bytes=max(1, local_size))
             local_file.unlink(missing_ok=True)
             return output_msg
 
