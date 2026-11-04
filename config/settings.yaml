@@ -1,0 +1,129 @@
+# Configuracao Central do Projeto: Monitor do Debate Publico Digital (TCC & DataSenado)
+# Nota de Seguranca (B1/B2): IDs de pastas do Google Drive e chaves HMAC ficam exclusivamente no .env (fora do Git).
+
+project:
+  name: "Monitor do Debate Público Digital - DataSenado & TCC"
+  target_universe: "Manifestações públicas digitais observadas sobre temas legislativos (Não-equivalente a censo demográfico)"
+  observational_unit: "1 Autor Digital Orgânico por Plataforma = 1 Unidade Observacional"
+  storage_policy: "zero_footprint_ephemeral" # Processa em /tmp e sincroniza Parquet ZSTD com Data Lake (Google Drive / S3)
+  local_cache_max_mb: 250
+  timezone: "America/Sao_Paulo"
+
+statistical_parameters:
+  confidence_level: 0.95                 # Nivel de confianca para estimativas na pseudo-amostra (Z = 1.96)
+  design_target_precision: 0.03          # Meta operacional de dimensionamento amostral (3 pontos percentuais)
+  expected_design_effect_deff: 1.50      # Fator DEFF esperado para dimensionamento amostral de Cochran (E-07)
+  bootstrap_iterations: 2500             # Reamostragens em chunks (G-05/E-03) para Intervalo de Confianca
+  bootstrap_chunk_size: 500              # Tamanho do lote em memoria para evitar O(B*n) excessivo
+  deduplicate_by_platform_author: true   # 1 Autor Digital Organico por Plataforma = 1 Unidade Observacional
+  tie_breaking_rule: "Neutro"            # Regra deterministica em caso de empate modal de um mesmo autor
+  multiple_testing_correction: "holm"    # Correcao de Holm-Bonferroni para multiplos testes (E-09)
+  stance_categories:
+    - "Favoravel"
+    - "Contrario"
+    - "Neutro"
+
+  # Truncamento de Pesos (Weight Trimming - Kish, 1992; Valliant, Dever & Kreuter, 2018) aplicado DENTRO do laco IPF (E-01)
+  weight_trimming:
+    enabled: true
+    min_weight: 0.25
+    max_weight: 4.00
+    max_ipf_iterations: 80
+    convergence_tolerance_pp: 0.01       # Tolerancia de 1 p.p. para considerar status CALIBRADO_OK
+
+cib_and_bot_detection:
+  minhash_num_perm: 128                  # Numero de permutacoes do MinHash (datasketch)
+  minhash_lsh_jaccard_threshold: 0.85    # Limiar de similaridade de Jaccard verificado exatamente pos-LSH (G-04)
+  min_distinct_co_shared_items_for_edge: 2 # Minimo de eventos/itens distintos co-compartilhados para formar aresta CIB (Giglietto et al., 2020)
+  account_cib_flagged_posts_min_count: 2 # Politica em nivel de conta (M-05): minimo de posts sinalizados para excluir conta
+  account_cib_flagged_posts_min_ratio: 0.30 # Ou no minimo 30% dos posts da conta sinalizados
+  hyperactivity_zscore_threshold: 3.0    # Limiar estatistico de anomalia comportamental (Z >= 3.0)
+  hyperactivity_posts_per_hour_cap: 50   # Teto operacional de postagens/hora sobre o mesmo tema (G-01/Secao 8)
+  suspected_cib_composite_threshold: 0.50 # Limiar do Indice Composto de Sinal de Coordenacao [0, 1]
+
+  # Pesos do Indice Heuristic Experimental de Sinal de Coordenacao (`coordination_signal_index` - M-06/Anexo A)
+  coordination_signal_weights:
+    textual_similarity_lsh: 0.30
+    temporal_synchrony: 0.25
+    shared_url_hashtag: 0.20
+    leiden_graph_centrality: 0.15
+    behavioral_hyperactivity: 0.10
+
+  # Janelas de sincronia temporal (segundos) especificas por dinamica de cada plataforma
+  cib_windows_by_platform_seconds:
+    telegram: 60
+    whatsapp: 60
+    x_twitter: 60
+    instagram_facebook: 120
+    tiktok: 180
+    youtube: 180
+
+  # Allowlist de dominios institucionais e jornalisticos para evitar falso positivo em compartilhamento organico de noticias (C-02)
+  institutional_and_news_domain_allowlist:
+    - "senado.leg.br"
+    - "camara.leg.br"
+    - "gov.br"
+    - "g1.globo.com"
+    - "uol.com.br"
+    - "folha.uol.com.br"
+    - "estadao.com.br"
+    - "cnnbrasil.com.br"
+    - "bbc.com"
+    - "agenciabrasil.ebc.com.br"
+
+# Pesos Normativos de Referencia para o Cenario 3 (Reponderado - Analise de Sensibilidade sob Ignorabilidade, E-02):
+# Nota Metodologica (E-02): Valores normativos de referencia inspirados na proporcao relativa de uso de plataformas no Brasil
+# (ref. TIC Domicilios CGI.br 2024, indicador B16A / Reuters Institute Digital News Report Brasil) e Censo Demografico IBGE 2022.
+platform_reference_weights_brazil:
+  whatsapp: 0.30
+  youtube: 0.25
+  instagram_facebook: 0.25
+  tiktok: 0.12
+  telegram: 0.04
+  x_twitter: 0.04
+
+ibge_macroregion_weights_brazil:
+  Sudeste: 0.42
+  Nordeste: 0.27
+  Sul: 0.14
+  Norte: 0.09
+  Centro-Oeste: 0.08
+
+# Temas Legislativos Piloto (Coleta com Neutralidade Lexical + Termos Populares Descritivos - M-04)
+pilot_themes:
+  - id: "pl_ia_2338"
+    title: "Regulamentação da Inteligência Artificial (PL 2338/2023 - Senado/Câmara)"
+    collection_query_terms:
+      - "PL 2338"
+      - "PL 2338/2023"
+      - "Marco Legal da IA"
+      - "lei da inteligência artificial"
+      - "regulamentação da IA"
+      - "regular a inteligência artificial"
+    nlp_stance_taxonomy:
+      favorable_markers:
+        - "proteção de direitos autorais"
+        - "segurança jurídica IA"
+        - "governança algorítmica responsável"
+      against_markers:
+        - "censura na IA"
+        - "atraso tecnológico"
+        - "excesso de burocracia estatal"
+
+  - id: "pec_escala_6x1"
+    title: "Debate Legislativo sobre a Escala 6x1 e Redução da Jornada de Trabalho"
+    collection_query_terms:
+      - "PEC escala 6x1"
+      - "escala 6x1"
+      - "fim da escala 6x1"
+      - "jornada de trabalho 6x1"
+      - "jornada 4x3"
+    nlp_stance_taxonomy:
+      favorable_markers:
+        - "qualidade de vida trabalhador"
+        - "redução da jornada sem redução salarial"
+        - "dignidade trabalhador 6x1"
+      against_markers:
+        - "custo para pequenas empresas"
+        - "risco de desemprego 6x1"
+        - "impacto produtivo escala 6x1"

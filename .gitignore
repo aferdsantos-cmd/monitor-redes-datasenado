@@ -1,0 +1,34 @@
+# Ignorar qualquer dado pesado, bancos de dados ou caches locais (Politica Pegada Zero no Mac)
+data/
+*.parquet
+*.db
+*.duckdb
+*.duckdb.wal
+*.sqlite
+*.csv
+*.jsonl
+*.zip
+*.txt
+!requirements.txt
+/tmp/
+Auditorias/
+
+# Segredos, senhas, chaves de API e sessoes de navegador (NUNCA subir para o GitHub)
+.env
+*.env
+config/secrets.yaml
+config/cookies/
+*.session
+*.session-journal
+auth_info_baileys/
+
+# Ambientes virtuais Python e caches de sistema
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.DS_Store
+Thumbs.db
