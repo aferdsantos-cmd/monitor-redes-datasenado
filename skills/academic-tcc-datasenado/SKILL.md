@@ -15,6 +15,7 @@ Orquestrador dos 5 Pilares de integridade acadêmica para redação de artigos (
 ## 2. Pilar 2 — Métodos Mistos (Quali-Quanti) e Visualização Científica
 - **Triangulação Quali-Quanti:** Integração entre inferência amostral estratificada (C1, C2, C3) e análise de conteúdo categorial (*Bardin, 2011*) para exploração de enquadramentos (*frames*).
 - **Padrão Gráfico Internacional (Elsevier/Springer/IEEE):** Paleta acessível Okabe-Ito (`#0072B2` favorável, `#D55E00` contrário, `#999999` neutro), barras de erro de IC 95% obrigatórias, 300+ DPI. Proibição de gráficos de pizza ou 3D.
+- **Roteamento UI/UX & DataViz:** Para implementação em telas analíticas e folhas @media print, veja [ui-ux-design-system-and-anti-ai-craft](../ui-ux-design-system-and-anti-ai-craft/SKILL.md) e [fe-data-viz-grids-maps-and-export](../fe-data-viz-grids-maps-and-export/SKILL.md).
 - **Referência:** [scientific_viz_and_mixed_methods.md](./references/scientific_viz_and_mixed_methods.md)
 
 ## 3. Pilar 3 — Bibliometria e Rastreabilidade Anti-Alucinação (DOI)

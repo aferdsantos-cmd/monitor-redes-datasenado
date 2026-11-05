@@ -34,10 +34,11 @@ Guia e checklist dos 5 Pilares de Excelência em Engenharia Sênior para desenvo
   ```bash
   ./skills/eng-python-zero-footprint/scripts/verify_gate.sh
   ```
-- **Roteamento Complementar de Engenharia e Ciência de Dados:**
+- **Roteamento Complementar de Engenharia, Ciência de Dados e Front-End:**
   - Para manipulação tabular vetorizada DuckDB/Pandas e integridade de joins: use `ds-eda-and-vectorized-manipulation`.
   - Para governança MLOps, ciclo de vida sem `pickle` e monitoramento de drift PSI: use `ds-mlops-and-model-lifecycle`.
   - Para execução neural otimizada em Apple Silicon `mps`/CPU e hashes perceptuais: use `ds-deep-learning-nlp-and-vision`.
+  - Para arquitetura reativa React/Radix e validação visual/a11y: use `fe-react-tailwind-radix-architecture` e `qa-visual-a11y-and-frontend-validator`.
 - **Referências Aprofundadas:**
   - [zero_footprint_and_security.md](./references/zero_footprint_and_security.md)
   - [senior_patterns_and_edge_cases.md](./references/senior_patterns_and_edge_cases.md)
