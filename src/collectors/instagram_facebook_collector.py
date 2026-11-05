@@ -22,6 +22,7 @@ from src.collectors.base_collector import (
     BaseLexicallyNeutralCollector,
     RawCollectedManifestation,
     _normalize_text_for_matching,
+    get_dynamic_theme_samples,
 )
 
 GRAPH_API_BASE_URL = "https://graph.facebook.com/v19.0"
@@ -77,9 +78,14 @@ class MetaInstagramFacebookCollector(BaseLexicallyNeutralCollector):
     def enforce_chronological_order(self, order: Optional[str] = "reverse_chronological") -> str:
         """
         Valida que a ordenação na Graph API é cronológica ('chronological' ou 'reverse_chronological').
-        Lança ValueError para qualquer ordenação algorítmica ('ranked', 'toplevel', 'relevance').
+        Lança ValueError para qualquer ordenação vazia, None ou algorítmica ('ranked', 'toplevel', 'relevance').
         """
-        norm = (order or "reverse_chronological").strip().lower()
+        if order is None or not isinstance(order, str) or not order.strip():
+            raise ValueError(
+                "VIÉS ALGORÍTMICO BLOQUEADO NA META: order não pode ser vazio ou None. "
+                "Use exclusivamente 'chronological' ou 'reverse_chronological'!"
+            )
+        norm = order.strip().lower()
         if norm not in ("chronological", "reverse_chronological"):
             raise ValueError(
                 "VIÉS ALGORÍTMICO BLOQUEADO NA META: Coleta observacional no Instagram/Facebook "
@@ -296,22 +302,14 @@ class MetaInstagramFacebookCollector(BaseLexicallyNeutralCollector):
         Gera lote de comentários com simulação de mojibake UTF-8 nativo da Meta.
         """
         base_dt = datetime(2026, 11, 4, 18, 0, tzinfo=timezone.utc)
-        if theme_id == "pec_escala_6x1":
-            samples = [
-                "Excelente debate sobre a PEC da escala 6x1 e a reduÃ§Ã£o da jornada sem reduÃ§Ã£o salarial #Escala6x1 https://senado.leg.br/noticia",
-                "O fim da escala 6x1 traz qualidade de vida trabalhador e saÃºde para todos os trabalhadores.",
-                "Precisamos pensar no custo para pequenas empresas e no risco de desemprego 6x1.",
-                "O impacto produtivo escala 6x1 precisa de estudo aprofundado antes da votaÃ§Ã£o.",
-                "Apoio a proposta da jornada 4x3 para valorizar a dignidade trabalhador 6x1 no Brasil.",
-            ]
-        else:
-            samples = [
-                "Acompanhando o PL 2338 com atenÃ§Ã£o. A proteÃ§Ã£o de direitos autorais Ã© fundamental! #PL2338 https://senado.leg.br/noticia",
-                "Marco Legal da IA precisa de seguranÃ§a jurÃ­dica IA e governanÃ§a algorÃ­tmica responsÃ¡vel.",
-                "Sou contrÃ¡rio se houver atraso tecnolÃ³gico e excesso de burocracia estatal no PL 2338.",
-                "VotaÃ§Ã£o da lei da inteligÃªncia artificial e regular a inteligÃªncia artificial com transparÃªncia.",
-                "Excelente audiÃªncia pÃºblica no Senado Federal sobre plataformas digitais e IA.",
-            ]
+        clean_samples = get_dynamic_theme_samples(theme_id)
+        samples = []
+        for s in clean_samples:
+            try:
+                mojibake_s = s.encode("utf-8").decode("latin-1")
+            except Exception:
+                mojibake_s = s
+            samples.append(mojibake_s)
 
         spectra = ["espectro_progressista", "espectro_conservador", "espectro_centro_institucional", "espectro_tecnico_setorial"]
         exponents = ["exp_senado_meta", "exp_pagina_trabalhista", "exp_empreendedor_digital", "exp_observatorio_ia"]

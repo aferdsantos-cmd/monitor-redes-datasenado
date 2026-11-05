@@ -30,6 +30,7 @@ from src.collectors.base_collector import (
     BaseLexicallyNeutralCollector,
     PHONE_PATTERN,
     RawCollectedManifestation,
+    enrich_settings_with_dynamic_themes,
 )
 from src.config_loader import load_settings
 from src.sampling.stratified_sampler import (
@@ -64,7 +65,7 @@ class EphemeralDuckDBMedallionLake:
         hmac_secret_key: Optional[str] = None,
         settings_override: Optional[Dict[str, Any]] = None,
     ) -> None:
-        self.settings = settings_override or load_settings()
+        self.settings = enrich_settings_with_dynamic_themes(settings_override)
         self.storage = ZeroFootprintStorage()
         self.memory_only = memory_only
         self._ephemeral_files: List[Path] = []

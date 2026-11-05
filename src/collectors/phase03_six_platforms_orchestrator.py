@@ -21,6 +21,9 @@ from src.collectors.base_collector import (
     BaseLexicallyNeutralCollector,
     RawCollectedManifestation,
     _normalize_text_for_matching,
+    enrich_settings_with_dynamic_themes,
+    get_dynamic_theme_samples,
+    register_custom_theme,
 )
 from src.collectors.instagram_facebook_collector import MetaInstagramFacebookCollector
 from src.collectors.telegram_collector import TelegramPublicChannelCollector
@@ -105,20 +108,20 @@ def filter_manifestations_by_spec(
     reference_dt: Optional[datetime] = None,
 ) -> List[RawCollectedManifestation]:
     """
-    Filtra rigorosamente um conjunto de manifestações de acordo com o contrato MonitoringWindowSpec.
+    Filtra rigorosamente um conjunto de manifestações de acordo com o contrato MonitoringWindowSpec:
+    1. Filtra por plataformas selecionadas e janela temporal [eff_start, eff_end];
+    2. Agrupa por plataforma e aplica max_manifestations_per_platform com preferência cronológica;
+    3. Intercala equitativamente (round-robin) caso max_total_manifestations seja definido (QA-F03-05);
+    4. Retorna a lista final ordenada estritamente por created_at ascendente.
     """
     eff_start, eff_end = spec.resolve_effective_time_bounds(reference_dt=reference_dt)
     allowed_platforms = set(spec.selected_platforms)
 
-    filtered: List[RawCollectedManifestation] = []
-    platform_counters: Dict[str, int] = defaultdict(int)
-
+    platform_buckets: Dict[str, List[RawCollectedManifestation]] = defaultdict(list)
     for m in manifestations:
-        # 1. Filtro de plataforma
         if m.platform not in allowed_platforms:
             continue
 
-        # 2. Filtro de janela temporal
         m_dt = m.created_at
         if m_dt.tzinfo is None:
             m_dt = m_dt.replace(tzinfo=timezone.utc)
@@ -128,20 +131,37 @@ def filter_manifestations_by_spec(
         if eff_end is not None and m_dt > eff_end:
             continue
 
-        # 3. Limite por plataforma
+        platform_buckets[m.platform].append(m)
+
+    capped_buckets: Dict[str, List[RawCollectedManifestation]] = {}
+    for plat, items in platform_buckets.items():
+        sorted_items = sorted(items, key=lambda x: x.created_at, reverse=True)
         if spec.max_manifestations_per_platform is not None:
-            if platform_counters[m.platform] >= spec.max_manifestations_per_platform:
-                continue
+            sorted_items = sorted_items[:spec.max_manifestations_per_platform]
+        capped_buckets[plat] = sorted_items
 
-        # 4. Limite global de manifestações
-        if spec.max_total_manifestations is not None:
-            if len(filtered) >= spec.max_total_manifestations:
+    selected: List[RawCollectedManifestation] = []
+    if spec.max_total_manifestations is not None:
+        active_plats = sorted(capped_buckets.keys())
+        bucket_ptrs = {p: 0 for p in active_plats}
+        while len(selected) < spec.max_total_manifestations:
+            added_in_round = False
+            for p in active_plats:
+                ptr = bucket_ptrs[p]
+                if ptr < len(capped_buckets[p]):
+                    selected.append(capped_buckets[p][ptr])
+                    bucket_ptrs[p] += 1
+                    added_in_round = True
+                    if len(selected) >= spec.max_total_manifestations:
+                        break
+            if not added_in_round:
                 break
+    else:
+        for items in capped_buckets.values():
+            selected.extend(items)
 
-        filtered.append(m)
-        platform_counters[m.platform] += 1
-
-    return filtered
+    selected.sort(key=lambda x: x.created_at)
+    return selected
 
 
 class Phase03SixPlatformsOrchestrator:
@@ -156,13 +176,9 @@ class Phase03SixPlatformsOrchestrator:
         settings_override: Optional[Dict[str, Any]] = None,
     ) -> None:
         self.theme_id = theme_id
-        self.settings = settings_override or load_settings()
-        self.hmac_secret_key = (
-            hmac_secret_key
-            or os.environ.get("DATASENADO_HMAC_SECRET_KEY")
-            or "k_datasenado_audit_fase03_master_2026"
-        )
-        # Inicializa os conectores das 6 plataformas
+        self.settings = enrich_settings_with_dynamic_themes(settings_override)
+        self.hmac_secret_key = hmac_secret_key
+        # Inicializa os conectores das 6 plataformas com os settings enriquecidos
         self.yt_collector = YouTubeOfficialCollector(settings_override=self.settings)
         self.tg_collector = TelegramPublicChannelCollector(settings_override=self.settings)
         self.x_collector = XTwitterCollector(settings_override=self.settings)
@@ -176,18 +192,24 @@ class Phase03SixPlatformsOrchestrator:
         posts_per_platform: int = 25,
         span_days: int = 7,
         selected_platforms: Optional[List[str]] = None,
+        include_controlled_noise: bool = True,
     ) -> List[RawCollectedManifestation]:
         """
         Gera lote representativo distribuído ao longo de span_days para as plataformas selecionadas.
+        Suporta qualquer tema legislativo (PL 2338, PEC 6x1, Presidência do Senado e customizados).
         """
         tid = theme_id or self.theme_id
         platforms = set(selected_platforms or VALID_PLATFORMS)
         all_manifestations: List[RawCollectedManifestation] = []
         now_utc = datetime.now(timezone.utc)
 
+        themes_map = {t["id"]: t for t in self.settings.get("pilot_themes", []) if isinstance(t, dict) and "id" in t}
+        t_cfg = themes_map.get(tid, {})
+        q_terms = t_cfg.get("collection_query_terms", [tid])
+        q_term = q_terms[0] if q_terms else tid
+
         # 1. YouTube
         if "youtube" in platforms:
-            q_term = "PL 2338" if tid == "pl_ia_2338" else "escala 6x1"
             yt_mock = YouTubeOfficialCollector.generate_mock_api_v3_response(
                 video_id=f"vid_{tid}_senado",
                 count=posts_per_platform,
@@ -195,9 +217,12 @@ class Phase03SixPlatformsOrchestrator:
             )
             for i, item in enumerate(yt_mock.get("items", [])):
                 m = self.yt_collector.parse_comment_thread_item(item, tid, q_term)
-                # Harmoniza timestamp para dentro da janela span_days
+                # Harmoniza timestamp com jitter realista para dentro da janela span_days
                 day_offset = i % max(1, span_days)
-                m.created_at = now_utc - timedelta(days=day_offset, hours=(i * 2) % 24)
+                m.created_at = (now_utc - timedelta(days=day_offset, hours=(i * 2) % 24)).replace(
+                    minute=(i * 5 + 3) % 60, second=(i * 11 + 7) % 60
+                )
+                m.text = f"{m.text} [yt_usr_{i}]"
                 # Enriquecimento com metadados de bolha/espectro
                 m.metadata.setdefault("exponent_seed_id", f"yt_channel_senado_{tid}")
                 m.metadata.setdefault("spectrum_seed_hint", "espectro_centro_institucional")
@@ -212,14 +237,16 @@ class Phase03SixPlatformsOrchestrator:
             tg_items = self.tg_collector.collect_from_telegram_json_export(tg_mock, tid)
             for i, m in enumerate(tg_items):
                 day_offset = i % max(1, span_days)
-                m.created_at = now_utc - timedelta(days=day_offset, hours=(i * 2) % 24)
+                m.created_at = (now_utc - timedelta(days=day_offset, hours=(i * 2) % 24)).replace(
+                    minute=(i * 7 + 13) % 60, second=(i * 13 + 17) % 60
+                )
+                m.text = f"{m.text} [tg_usr_{i}]"
                 m.metadata.setdefault("exponent_seed_id", "tg_canal_noticias_senado")
                 m.metadata.setdefault("spectrum_seed_hint", "espectro_progressista")
             all_manifestations.extend(tg_items)
 
         # 3. X / Twitter
         if "x_twitter" in platforms:
-            q_term = "PL 2338" if tid == "pl_ia_2338" else "escala 6x1"
             x_mock = XTwitterCollector.generate_mock_x_v2_response(
                 query=q_term,
                 count=posts_per_platform,
@@ -227,6 +254,12 @@ class Phase03SixPlatformsOrchestrator:
                 theme_id=tid,
             )
             x_items = self.x_collector.collect_from_json_export(x_mock, tid)
+            for i, m in enumerate(x_items):
+                day_offset = i % max(1, span_days)
+                m.created_at = (now_utc - timedelta(days=day_offset, hours=(i * 2) % 24)).replace(
+                    minute=(i * 9 + 23) % 60, second=(i * 17 + 29) % 60
+                )
+                m.text = f"{m.text} [x_usr_{i}]"
             all_manifestations.extend(x_items)
 
         # 4. Meta Instagram / Facebook
@@ -237,6 +270,12 @@ class Phase03SixPlatformsOrchestrator:
                 span_days=span_days,
             )
             meta_items = self.meta_collector.collect_from_meta_json_export(meta_mock, tid)
+            for i, m in enumerate(meta_items):
+                day_offset = i % max(1, span_days)
+                m.created_at = (now_utc - timedelta(days=day_offset, hours=(i * 2) % 24)).replace(
+                    minute=(i * 11 + 31) % 60, second=(i * 19 + 37) % 60
+                )
+                m.text = f"{m.text} [meta_usr_{i}]"
             all_manifestations.extend(meta_items)
 
         # 5. TikTok
@@ -247,6 +286,12 @@ class Phase03SixPlatformsOrchestrator:
                 span_days=span_days,
             )
             tt_items = self.tiktok_collector.collect_from_tiktok_json_export(tt_mock, tid)
+            for i, m in enumerate(tt_items):
+                day_offset = i % max(1, span_days)
+                m.created_at = (now_utc - timedelta(days=day_offset, hours=(i * 2) % 24)).replace(
+                    minute=(i * 13 + 41) % 60, second=(i * 23 + 43) % 60
+                )
+                m.text = f"{m.text} [tt_usr_{i}]"
             all_manifestations.extend(tt_items)
 
         # 6. WhatsApp
@@ -257,7 +302,65 @@ class Phase03SixPlatformsOrchestrator:
                 span_days=span_days,
             )
             wa_items = self.wa_collector.parse_whatsapp_txt_export(wa_txt, tid, channel_name="grupo_cidadania_brasil")
+            for i, m in enumerate(wa_items):
+                day_offset = i % max(1, span_days)
+                m.created_at = (now_utc - timedelta(days=day_offset, hours=(i * 2) % 24)).replace(
+                    minute=(i * 17 + 47) % 60, second=(i * 29 + 51) % 60
+                )
+                m.text = f"{m.text} [wa_usr_{i}]"
             all_manifestations.extend(wa_items)
+
+        # Injeção realista de ruído controlado de Spam e CIB (QA-F03-07 / SIM-F03-04)
+        if include_controlled_noise and platforms:
+            noise_plat = "x_twitter" if "x_twitter" in platforms else next(iter(platforms))
+            # 1. Dois spams comerciais com termo neutro de busca para exercitar quarentena comercial
+            spam_1 = RawCollectedManifestation(
+                comment_id=f"noise_spam_1_{tid}",
+                theme_id=tid,
+                platform=noise_plat,
+                raw_author_id="spam_bot_user_991",
+                text=f"Aproveite agora: sorteio pix e cupom de desconto 90% off no curso online! Acesse https://spam-loja.biz sobre {q_term}",
+                created_at=now_utc - timedelta(hours=6),
+                collection_query_used=q_term,
+                collector_modality="official_api_chronological" if noise_plat in ("youtube", "x_twitter", "instagram_facebook", "tiktok") else "passive_export_ingestion",
+                shared_urls=["https://spam-loja.biz"],
+                hashtags=["#SpamPromo"],
+                metadata={"spectrum_seed_hint": "espectro_spam_comercial", "exponent_seed_id": "spam_network_root"},
+            )
+            spam_2 = RawCollectedManifestation(
+                comment_id=f"noise_spam_2_{tid}",
+                theme_id=tid,
+                platform=noise_plat,
+                raw_author_id="spam_bot_user_992",
+                text=f"Compre agora com link na bio para comprar criptomoeda gratis e ganhe dinheiro facil na discussao de {q_term} https://crypto-promocao.com",
+                created_at=now_utc - timedelta(hours=5),
+                collection_query_used=q_term,
+                collector_modality="official_api_chronological" if noise_plat in ("youtube", "x_twitter", "instagram_facebook", "tiktok") else "passive_export_ingestion",
+                shared_urls=["https://crypto-promocao.com"],
+                hashtags=["#CryptoBonus"],
+                metadata={"spectrum_seed_hint": "espectro_spam_comercial", "exponent_seed_id": "spam_network_root"},
+            )
+            all_manifestations.extend([spam_1, spam_2])
+
+            # 2. Rajada sincronizada CIB (4 contas em janela curta < 10s compartilhando a mesma URL e hashtags de ataque)
+            burst_dt = now_utc - timedelta(hours=3)
+            cib_text = f"Ataque coordenado contra o relator de {q_term} e contra a Mesa Diretora do Senado Federal https://cib-ataque-coordenado.org/campanha #AtaqueCoordenado #DerrubemJa"
+            for c_idx in range(1, 5):
+                cib_m = RawCollectedManifestation(
+                    comment_id=f"noise_cib_{c_idx}_{tid}",
+                    theme_id=tid,
+                    platform=noise_plat,
+                    raw_author_id=f"cib_coord_account_{c_idx}",
+                    text=cib_text,
+                    created_at=burst_dt + timedelta(seconds=c_idx * 2),
+                    collection_query_used=q_term,
+                    collector_modality="official_api_chronological" if noise_plat in ("youtube", "x_twitter", "instagram_facebook", "tiktok") else "passive_export_ingestion",
+                    shared_urls=["https://cib-ataque-coordenado.org/campanha"],
+                    hashtags=["#AtaqueCoordenado", "#DerrubemJa"],
+                    phone_or_location_hint="+55 (61) 98888-1111",
+                    metadata={"spectrum_seed_hint": "espectro_cib_coordination", "exponent_seed_id": "cib_cluster_root"},
+                )
+                all_manifestations.append(cib_m)
 
         return all_manifestations
 
@@ -309,16 +412,28 @@ class Phase03SixPlatformsOrchestrator:
             ORDER BY total_posts DESC
         """, [theme_id]).fetchall()
 
+        plat_org_rows = conn.execute("""
+            SELECT platform, COUNT(DISTINCT author_id_hash)
+            FROM silver_organic_accounts_frame
+            WHERE theme_id = ?
+            GROUP BY platform
+        """, [theme_id]).fetchall()
+        org_acc_by_plat = {r[0]: r[1] for r in plat_org_rows}
+
         by_platform_breakdown = []
         for r in plat_rows:
             p_name, tot_p, sp, cb, fav, ag, neu = r
             clean_p = fav + ag + neu
+            org_acc_plat = org_acc_by_plat.get(p_name, 0)
+            share_plat_pct = round((org_acc_plat / max(1, organic_accounts_N)) * 100.0, 2)
             by_platform_breakdown.append({
                 "platform": p_name,
                 "raw_posts": tot_p,
                 "spam_posts": sp,
                 "cib_posts": cb,
                 "clean_organic_posts": clean_p,
+                "organic_accounts_N": org_acc_plat,
+                "share_of_organic_universe_pct": share_plat_pct,
                 "fav_pct": round((fav / max(1, clean_p)) * 100.0, 2),
                 "against_pct": round((ag / max(1, clean_p)) * 100.0, 2),
                 "neutral_pct": round((neu / max(1, clean_p)) * 100.0, 2),
@@ -361,7 +476,7 @@ class Phase03SixPlatformsOrchestrator:
         by_macroregion_breakdown = {r[0]: r[1] for r in reg_rows}
 
         # 5. Inteligência de Bolhas Digitais e Espectros (ADR-010)
-        # Extrai os metadados contextuais das manifestações fornecidas
+        # Extrai os metadados contextuais exclusivamente de manifestações orgânicas limpas (QA-F03-07 / SIM-F03-04)
         spectrum_stats: Dict[str, Dict[str, Any]] = defaultdict(lambda: {
             "posts_count": 0,
             "fav_count": 0,
@@ -372,14 +487,32 @@ class Phase03SixPlatformsOrchestrator:
         })
 
         if manifestations_context:
-            # Mapeia stance das manifestações a partir do banco
-            stance_map = dict(conn.execute("SELECT comment_id, stance_label FROM silver_comments_classified WHERE theme_id = ?", [theme_id]).fetchall())
+            clean_stance_map = dict(
+                conn.execute(
+                    """
+                    SELECT comment_id, stance_label
+                    FROM silver_comments_classified
+                    WHERE theme_id = ?
+                      AND is_commercial_spam = FALSE
+                      AND account_suspected_cib = FALSE
+                    """,
+                    [theme_id],
+                ).fetchall()
+            )
+
             for m in manifestations_context:
                 if m.theme_id != theme_id:
                     continue
+                # Blindagem estrita: descarta posts em quarentena (spam/CIB)
+                if m.comment_id not in clean_stance_map:
+                    continue
+
                 spec_id = m.metadata.get("spectrum_seed_hint") or "nao_rotulado_unsupervised"
+                if "spam" in spec_id.lower() or "cib" in spec_id.lower():
+                    continue
+
                 exp_id = m.metadata.get("exponent_seed_id") or "seed_geral"
-                s_label = stance_map.get(m.comment_id, "Neutro")
+                s_label = clean_stance_map.get(m.comment_id, "Neutro")
 
                 st = spectrum_stats[spec_id]
                 st["posts_count"] += 1
@@ -412,7 +545,56 @@ class Phase03SixPlatformsOrchestrator:
         # Ordena por primeiro registro cronológico para identificar qual espectro iniciou a pauta
         by_digital_spectrum_summary.sort(key=lambda x: (x["first_seen_utc"] or "9999"))
 
-        # 6. Domínios de Mídia Jornalística mais citados (Pilar 2 / ADR-011)
+        # 6. Rankings Forenses de URLs e Hashtags Orgânicas vs. CIB/Spam (QA-F03-06)
+        clean_entities_rows = conn.execute("""
+            SELECT b.shared_urls_json, b.hashtags_json
+            FROM bronze_sanitized_ingest b
+            JOIN silver_comments_classified s
+              ON b.comment_id = s.comment_id AND b.theme_id = s.theme_id
+            WHERE b.theme_id = ?
+              AND s.is_commercial_spam = FALSE
+              AND s.account_suspected_cib = FALSE
+        """, [theme_id]).fetchall()
+
+        cib_entities_rows = conn.execute("""
+            SELECT b.shared_urls_json, b.hashtags_json
+            FROM bronze_sanitized_ingest b
+            JOIN silver_comments_classified s
+              ON b.comment_id = s.comment_id AND b.theme_id = s.theme_id
+            WHERE b.theme_id = ?
+              AND (s.is_commercial_spam = TRUE OR s.account_suspected_cib = TRUE)
+        """, [theme_id]).fetchall()
+
+        def _aggregate_urls_and_tags(rows):
+            url_counter = Counter()
+            tag_counter = Counter()
+            for r in rows:
+                urls_j, tags_j = r
+                if urls_j:
+                    try:
+                        u_list = json.loads(urls_j)
+                        for u in u_list:
+                            if u:
+                                url_counter[u] += 1
+                    except Exception:
+                        pass
+                if tags_j:
+                    try:
+                        t_list = json.loads(tags_j)
+                        for t in t_list:
+                            if t:
+                                tag_counter[t] += 1
+                    except Exception:
+                        pass
+            return {
+                "top_urls": [{"url": u, "count": c} for u, c in url_counter.most_common(10)],
+                "top_hashtags": [{"hashtag": t, "count": c} for t, c in tag_counter.most_common(10)],
+            }
+
+        top_organic_urls_and_hashtags = _aggregate_urls_and_tags(clean_entities_rows)
+        top_cib_attack_urls_and_hashtags = _aggregate_urls_and_tags(cib_entities_rows)
+
+        # 7. Domínios de Mídia Jornalística mais citados (Pilar 2 / ADR-011)
         media_domains_counter: Counter = Counter()
         if manifestations_context:
             for m in manifestations_context:
@@ -422,21 +604,33 @@ class Phase03SixPlatformsOrchestrator:
 
         top_news_domains = [{"domain": d, "citations_count": cnt} for d, cnt in media_domains_counter.most_common(5)]
 
-        # 7. Contrato de Interoperabilidade 360º (ADR-011)
+        # 8. Contrato de Interoperabilidade 360º Dinâmico (ADR-011 / QA-F03-08)
         start_day = by_day_timeseries[0]["day_brt"] if by_day_timeseries else "N/A"
         end_day = by_day_timeseries[-1]["day_brt"] if by_day_timeseries else "N/A"
-        theme_cfg = self.settings.get("pilot_themes", [{}])[0]
+
+        themes_map = {t["id"]: t for t in self.settings.get("pilot_themes", []) if isinstance(t, dict) and "id" in t}
+        t_cfg = themes_map.get(theme_id, {})
+        comm = t_cfg.get("senate_committee")
+        if not comm:
+            if "2338" in theme_id or "ia" in theme_id:
+                comm = "CCT/CCJ"
+            elif "6x1" in theme_id or "escala" in theme_id:
+                comm = "CAS/CCJ"
+            elif "presidencia" in theme_id or "mesa" in theme_id:
+                comm = "CCJ/Mesa Diretora"
+            else:
+                comm = "Comissão Geral"
 
         ecosystem_360_interop_contract = {
             "theme_id": theme_id,
-            "senate_committee": "CCT/CCJ" if "2338" in theme_id else "CAS/CCJ",
+            "senate_committee": comm,
             "date_window_brt": {
                 "start_day": start_day,
                 "end_day": end_day,
                 "total_days_active": len(by_day_timeseries),
             },
             "shared_news_domains_ranking": top_news_domains,
-            "collection_query_terms": theme_cfg.get("collection_query_terms", []),
+            "collection_query_terms": t_cfg.get("collection_query_terms", []),
             "active_spectra": [s["spectrum_id"] for s in by_digital_spectrum_summary],
             "ready_for_editorial_intelligence_pilar2": True,
             "ready_for_search_trends_pilar3": True,
@@ -451,6 +645,8 @@ class Phase03SixPlatformsOrchestrator:
             "by_shift_breakdown": by_shift_breakdown,
             "by_macroregion_breakdown": by_macroregion_breakdown,
             "by_digital_spectrum_and_bubbles_summary": by_digital_spectrum_summary,
+            "top_organic_urls_and_hashtags": top_organic_urls_and_hashtags,
+            "top_cib_attack_urls_and_hashtags": top_cib_attack_urls_and_hashtags,
             "top_news_domains": top_news_domains,
             "ecosystem_360_interop_contract": ecosystem_360_interop_contract,
         }
@@ -475,6 +671,20 @@ class Phase03SixPlatformsOrchestrator:
         tid = theme_id or self.theme_id
         spec = window_spec or MonitoringWindowSpec()
 
+        # Validação Fail-Closed estrita da chave HMAC LGPD (ADR-002 / QA-F03-02)
+        effective_key = self.hmac_secret_key
+        if effective_key is None:
+            effective_key = os.environ.get("LGPD_HMAC_SECRET_KEY")
+        if (
+            not effective_key
+            or not isinstance(effective_key, str)
+            or len(effective_key.strip()) < 32
+            or effective_key.strip().startswith("defina-")
+        ):
+            raise RuntimeError(
+                "FALHA FECHADA LGPD (ADR-002): LGPD_HMAC_SECRET_KEY ausente ou menor que 32 caracteres."
+            )
+
         # Obtém manifestações brutas
         raw_items = manifestations or self.generate_multiplatform_manifestations(
             theme_id=tid,
@@ -487,7 +697,7 @@ class Phase03SixPlatformsOrchestrator:
         filtered_items = filter_manifestations_by_spec(raw_items, spec)
 
         with EphemeralDuckDBMedallionLake(
-            hmac_secret_key=self.hmac_secret_key,
+            hmac_secret_key=effective_key,
             settings_override=self.settings,
         ) as lake:
             # 1. Ingestão na Camada Bronze

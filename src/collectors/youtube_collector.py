@@ -19,6 +19,7 @@ import urllib.request
 from src.collectors.base_collector import (
     BaseLexicallyNeutralCollector,
     RawCollectedManifestation,
+    get_dynamic_theme_samples,
 )
 
 logger = logging.getLogger(__name__)
@@ -237,22 +238,7 @@ class YouTubeOfficialCollector(BaseLexicallyNeutralCollector):
         """
         items = []
         base_dt = datetime(2026, 10, 27, 14, 0, tzinfo=timezone.utc)
-        if theme_id == "pec_escala_6x1":
-            sample_texts = [
-                "Excelente debate sobre a PEC da escala 6x1 no Senado Federal #Escala6x1 https://senado.leg.br/noticia",
-                "Acompanhando a votacao da proposta sobre a jornada de trabalho e fim da escala 6x1 hoje #FimDaEscala6x1",
-                "Sou a favor da reducao da jornada na escala 6x1 para garantir mais qualidade de vida aos trabalhadores.",
-                "O debate da PEC da escala 6x1 precisa considerar a sustentabilidade economica dos setores produtivos.",
-                "Transmissao ao vivo muito esclarecedora sobre a escala 6x1 e os direitos dos trabalhadores no Brasil.",
-            ]
-        else:
-            sample_texts = [
-                "Excelente debate sobre o PL 2338 no Senado Federal. Protecao de direitos e essencial! https://senado.leg.br/noticia #PL2338",
-                "Acompanhando a votacao da lei da inteligencia artificial hoje. Precisamos de regras claras #MarcoLegalIA",
-                "Sou contra o PL 2338/2023 se houver burocracia excessiva, mas apoio a transparencia algoritmica.",
-                "O sorteio do relator do PL 2338 foi muito relevante. Assistindo a transmissao ao vivo.",
-                "Regulamentacao da IA e urgente no Brasil para evitar fraudes digitais e proteger dados pessoais.",
-            ]
+        sample_texts = get_dynamic_theme_samples(theme_id)
 
         sample_ddds = ["+55 (11) 98765-4321", "+55 (21) 99888-7766", "+55 (71) 98111-2233", "+55 (41) 99222-3344", "+55 (61) 98333-4455", "+55 (92) 99444-5566"]
 

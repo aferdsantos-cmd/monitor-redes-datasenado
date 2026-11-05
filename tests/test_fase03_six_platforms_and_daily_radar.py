@@ -13,6 +13,7 @@ Valida:
    Contrato 360º (ADR-011) e Zero-Footprint estrito (0 KB residual).
 """
 
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -24,6 +25,7 @@ import pytest
 from src.collectors.base_collector import (
     BaseLexicallyNeutralCollector,
     RawCollectedManifestation,
+    register_custom_theme,
 )
 from src.collectors.daily_radar_collector import (
     DailyLegislativeRadarCollector,
@@ -89,8 +91,12 @@ def test_x_twitter_collector_enforces_recency_and_rejects_algorithmic_orders() -
     """Comprova que o coletor X/Twitter exige exclusivamente sort_order='recency'."""
     x = XTwitterCollector()
     assert x.enforce_chronological_sort_order("recency") == "recency"
-    assert x.enforce_chronological_sort_order(None) == "recency"
-    assert x.enforce_chronological_sort_order("") == "recency"
+    with pytest.raises(ValueError):
+        x.enforce_chronological_sort_order(None)
+    with pytest.raises(ValueError):
+        x.enforce_chronological_sort_order("")
+    with pytest.raises(ValueError):
+        x.enforce_chronological_sort_order("   ")
 
     bad_orders = ["relevancy", "popular", "likes", "engagement", "views", "custom"]
     for bad in bad_orders:
@@ -158,7 +164,12 @@ def test_meta_collector_enforces_chronological_and_rejects_ranked_order() -> Non
     meta = MetaInstagramFacebookCollector()
     assert meta.enforce_chronological_order("chronological") == "chronological"
     assert meta.enforce_chronological_order("reverse_chronological") == "reverse_chronological"
-    assert meta.enforce_chronological_order(None) == "reverse_chronological"
+    with pytest.raises(ValueError):
+        meta.enforce_chronological_order(None)
+    with pytest.raises(ValueError):
+        meta.enforce_chronological_order("")
+    with pytest.raises(ValueError):
+        meta.enforce_chronological_order("   ")
 
     bad_orders = ["ranked", "toplevel", "relevance", "popularity"]
     for bad in bad_orders:
@@ -198,7 +209,12 @@ def test_tiktok_collector_enforces_create_time_and_rejects_likes_order() -> None
     tt = TikTokResearchCollector()
     assert tt.enforce_chronological_order("create_time") == "create_time"
     assert tt.enforce_chronological_order("time") == "time"
-    assert tt.enforce_chronological_order(None) == "create_time"
+    with pytest.raises(ValueError):
+        tt.enforce_chronological_order(None)
+    with pytest.raises(ValueError):
+        tt.enforce_chronological_order("")
+    with pytest.raises(ValueError):
+        tt.enforce_chronological_order("   ")
 
     bad_orders = ["likes", "popular", "relevance", "engagements"]
     for bad in bad_orders:
@@ -550,3 +566,233 @@ def test_phase03_orchestrator_ecosystem_360_interop_contract() -> None:
         assert contract["ready_for_editorial_intelligence_pilar2"] is True
         assert contract["ready_for_search_trends_pilar3"] is True
         assert contract["ready_for_datasenado_survey_pilar4"] is True
+
+
+# ==============================================================================
+# 9. Testes de Saneamento de Atalhos QA e Tema Eleição Presidência do Senado (v3.0.1)
+# ==============================================================================
+
+
+def test_orchestrator_hmac_fail_closed_without_env_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Valida fail-closed estrito no Phase03SixPlatformsOrchestrator quando LGPD_HMAC_SECRET_KEY estiver ausente."""
+    monkeypatch.delenv("LGPD_HMAC_SECRET_KEY", raising=False)
+    monkeypatch.delenv("DATASENADO_HMAC_SECRET_KEY", raising=False)
+    orch = Phase03SixPlatformsOrchestrator(theme_id="pl_ia_2338", hmac_secret_key=None)
+    with pytest.raises(RuntimeError, match="FALHA FECHADA LGPD"):
+        orch.run_full_six_platforms_pipeline(cleanup_after_run=True)
+
+
+def test_all_collectors_reject_empty_and_none_sort_order() -> None:
+    """Comprova que conectores X, Meta e TikTok rejeitam expressamente None, '' e '   '."""
+    x = XTwitterCollector()
+    meta = MetaInstagramFacebookCollector()
+    tt = TikTokResearchCollector()
+
+    for invalid in [None, "", "   "]:
+        with pytest.raises(ValueError, match="VIÉS ALGORÍTMICO BLOQUEADO NO X/TWITTER"):
+            x.enforce_chronological_sort_order(invalid)
+        with pytest.raises(ValueError, match="VIÉS ALGORÍTMICO BLOQUEADO NA META"):
+            meta.enforce_chronological_order(invalid)
+        with pytest.raises(ValueError, match="VIÉS ALGORÍTMICO BLOQUEADO NO TIKTOK"):
+            tt.enforce_chronological_order(invalid)
+
+
+def test_filter_manifestations_by_spec_chronological_and_multiplatform_balance() -> None:
+    """
+    Comprova que a filtragem por spec respeita ordenação estrita ascendente por created_at
+    e equilibra equitativamente (round-robin) as plataformas ao aplicar max_total_manifestations.
+    """
+    orch = Phase03SixPlatformsOrchestrator(theme_id="pl_ia_2338")
+    items = orch.generate_multiplatform_manifestations(theme_id="pl_ia_2338", posts_per_platform=25, span_days=7, include_controlled_noise=False)
+    assert len(items) >= 150
+
+    spec = MonitoringWindowSpec(
+        window_days=7,
+        selected_platforms=list(VALID_PLATFORMS),
+        max_total_manifestations=30,
+    )
+    filtered = filter_manifestations_by_spec(items, spec)
+    assert len(filtered) == 30
+
+    # 1. Verifica ordem cronológica estritamente ascendente
+    for i in range(len(filtered) - 1):
+        assert filtered[i].created_at <= filtered[i + 1].created_at, "Ordem cronológica violada em filter_manifestations_by_spec."
+
+    # 2. Verifica equilíbrio multi-plataforma (nenhuma plataforma monopoliza os 30 itens)
+    plat_counts = Counter(m.platform for m in filtered)
+    assert len(plat_counts) == 6, f"Esperava 6 plataformas no corte de 30 itens, mas obteve: {plat_counts}"
+    for p, c in plat_counts.items():
+        assert c == 5, f"Esperava 5 itens por plataforma no round-robin de 30 itens, mas obteve {c} para {p}."
+
+
+def test_descriptive_report_sql_completeness_and_spam_cib_ranking() -> None:
+    """
+    Comprova que o relatório descritivo SQL inclui organic_accounts_N, share_of_organic_universe_pct
+    em by_platform_breakdown, além dos rankings top_organic_urls_and_hashtags e top_cib_attack_urls_and_hashtags.
+    """
+    orch = Phase03SixPlatformsOrchestrator(theme_id="pl_ia_2338")
+    spec = MonitoringWindowSpec(
+        window_days=7,
+        selected_platforms=list(VALID_PLATFORMS),
+        max_manifestations_per_platform=20,
+    )
+    res = orch.run_full_six_platforms_pipeline(theme_id="pl_ia_2338", window_spec=spec, cleanup_after_run=True)
+    report = res["descriptive_statistics_report"]
+
+    # 1. Verifica métricas por plataforma
+    assert "by_platform_breakdown" in report
+    assert len(report["by_platform_breakdown"]) == 6
+    for pb in report["by_platform_breakdown"]:
+        assert "organic_accounts_N" in pb
+        assert "share_of_organic_universe_pct" in pb
+        assert isinstance(pb["organic_accounts_N"], int)
+        assert isinstance(pb["share_of_organic_universe_pct"], float)
+
+    # 2. Verifica rankings forenses de URLs e Hashtags na raiz do relatório
+    assert "top_organic_urls_and_hashtags" in report
+    assert "top_cib_attack_urls_and_hashtags" in report
+
+    top_org = report["top_organic_urls_and_hashtags"]
+    top_cib = report["top_cib_attack_urls_and_hashtags"]
+    assert "top_urls" in top_org and "top_hashtags" in top_org
+    assert "top_urls" in top_cib and "top_hashtags" in top_cib
+
+    # URLs de ataque CIB devem constar em top_cib
+    cib_urls_found = [u["url"] for u in top_cib["top_urls"]]
+    assert any("cib-ataque" in u or "spam-loja" in u or "crypto-promocao" in u for u in cib_urls_found)
+
+
+def test_digital_spectrum_summary_excludes_spam_and_cib_attacks() -> None:
+    """
+    Comprova que manifestações em quarentena de spam (mesmo às 06:00 UTC) e ataques CIB
+    são 100% descartadas em by_digital_spectrum_and_bubbles_summary e não distorcem first_seen_utc.
+    """
+    orch = Phase03SixPlatformsOrchestrator(theme_id="pl_ia_2338")
+    now_utc = datetime.now(timezone.utc)
+
+    # Cria post de spam às 06:00 UTC com spectrum_seed_hint
+    spam_m = RawCollectedManifestation(
+        comment_id="test_early_spam_6am",
+        theme_id="pl_ia_2338",
+        platform="x_twitter",
+        raw_author_id="spam_bot_0600",
+        text="Aproveite agora: sorteio pix e cupom de desconto 90% off no curso online! Acesse https://spam-loja.biz sobre PL 2338",
+        created_at=now_utc.replace(hour=6, minute=0, second=0, microsecond=0),
+        collection_query_used="PL 2338",
+        collector_modality="official_api_chronological",
+        shared_urls=["https://spam-loja.biz"],
+        metadata={"spectrum_seed_hint": "espectro_conservador", "exponent_seed_id": "spam_seed"},
+    )
+
+    # Cria post orgânico limpo às 09:00 UTC
+    organic_m = RawCollectedManifestation(
+        comment_id="test_clean_organic_9am",
+        theme_id="pl_ia_2338",
+        platform="x_twitter",
+        raw_author_id="senador_cidadao_0900",
+        text="Debate fundamental no Senado sobre o PL 2338 e protecao de direitos autorais para artistas #PL2338 https://senado.leg.br/noticia",
+        created_at=now_utc.replace(hour=9, minute=0, second=0, microsecond=0),
+        collection_query_used="PL 2338",
+        collector_modality="official_api_chronological",
+        shared_urls=["https://senado.leg.br/noticia"],
+        metadata={"spectrum_seed_hint": "espectro_conservador", "exponent_seed_id": "exp_legitimo"},
+    )
+
+    spec = MonitoringWindowSpec(window_days=7, selected_platforms=["x_twitter"])
+    res = orch.run_full_six_platforms_pipeline(
+        theme_id="pl_ia_2338",
+        window_spec=spec,
+        manifestations=[spam_m, organic_m],
+        cleanup_after_run=True,
+    )
+    report = res["descriptive_statistics_report"]
+    bubbles = report["by_digital_spectrum_and_bubbles_summary"]
+    assert len(bubbles) > 0
+
+    conservador = next((b for b in bubbles if b["spectrum_id"] == "espectro_conservador"), None)
+    assert conservador is not None
+    # Post orgânico deve ser 1 (o spam de 06:00 UTC foi descartado)
+    assert conservador["organic_posts_count"] == 1
+    # O first_seen_utc deve ser às 09:00 UTC e JAMAIS às 06:00 UTC
+    assert "T09:00:00" in conservador["first_seen_utc"]
+    assert "T06:00:00" not in conservador["first_seen_utc"]
+
+
+def test_eleicao_presidencia_senado_and_pec_6x1_end_to_end_pipeline() -> None:
+    """
+    Executa o pipeline completo para o novo 3º tema contemporâneo real
+    (eleicao_presidencia_senado — Eleição da Presidência e Mesa do Senado em Fevereiro),
+    para pec_escala_6x1 e para um tema customizado via register_custom_theme, comprovando
+    que a taxonomia, as queries e a interoperabilidade funcionam perfeitamente sem vazamento de PL 2338.
+    """
+    # 1. Executa para eleicao_presidencia_senado
+    orch_pres = Phase03SixPlatformsOrchestrator(theme_id="eleicao_presidencia_senado")
+    spec_pres = MonitoringWindowSpec(
+        window_days=7,
+        selected_platforms=list(VALID_PLATFORMS),
+        max_manifestations_per_platform=10,
+        target_sample_size_n=30,
+    )
+    res_pres = orch_pres.run_full_six_platforms_pipeline(
+        theme_id="eleicao_presidencia_senado",
+        window_spec=spec_pres,
+        cleanup_after_run=True,
+    )
+    rep_pres = res_pres["descriptive_statistics_report"]
+    contract_pres = rep_pres["ecosystem_360_interop_contract"]
+
+    assert contract_pres["theme_id"] == "eleicao_presidencia_senado"
+    assert "CCJ" in contract_pres["senate_committee"]
+    assert any("presidencia" in q.lower() or "senado" in q.lower() for q in contract_pres["collection_query_terms"])
+    assert not any("2338" in q for q in contract_pres["collection_query_terms"])
+    assert res_pres["tmp_residual_bytes"] == 0
+
+    # 2. Executa para pec_escala_6x1
+    orch_pec = Phase03SixPlatformsOrchestrator(theme_id="pec_escala_6x1")
+    spec_pec = MonitoringWindowSpec(
+        window_days=7,
+        selected_platforms=list(VALID_PLATFORMS),
+        max_manifestations_per_platform=10,
+        target_sample_size_n=30,
+    )
+    res_pec = orch_pec.run_full_six_platforms_pipeline(
+        theme_id="pec_escala_6x1",
+        window_spec=spec_pec,
+        cleanup_after_run=True,
+    )
+    rep_pec = res_pec["descriptive_statistics_report"]
+    contract_pec = rep_pec["ecosystem_360_interop_contract"]
+
+    assert contract_pec["theme_id"] == "pec_escala_6x1"
+    assert "CAS" in contract_pec["senate_committee"]
+    assert any("6x1" in q for q in contract_pec["collection_query_terms"])
+    assert not any("2338" in q for q in contract_pec["collection_query_terms"])
+
+    # 3. Registra tema customizado em tempo de execução via register_custom_theme e executa
+    custom_theme = {
+        "id": "reforma_codigo_civil",
+        "title": "Atualização do Código Civil no Senado Federal",
+        "senate_committee": "CJCODCIVIL/CCJ",
+        "collection_query_terms": [
+            "reforma do codigo civil",
+            "novo codigo civil no Senado",
+            "comissao juristas codigo civil",
+        ],
+        "nlp_stance_taxonomy": {
+            "favorable_markers": ["modernizacao do direito civil", "seguranca juridica contratual"],
+            "against_markers": ["inseguranca juridica civil", "retrocesso nas relacoes civis"],
+            "neutral_markers": ["comissao de juristas", "anteprojeto de lei civil"],
+        },
+    }
+    register_custom_theme(custom_theme)
+    orch_cust = Phase03SixPlatformsOrchestrator(theme_id="reforma_codigo_civil")
+    res_cust = orch_cust.run_full_six_platforms_pipeline(
+        theme_id="reforma_codigo_civil",
+        window_spec=MonitoringWindowSpec(window_days=7, max_manifestations_per_platform=5),
+        cleanup_after_run=True,
+    )
+    rep_cust = res_cust["descriptive_statistics_report"]
+    contract_cust = rep_cust["ecosystem_360_interop_contract"]
+    assert contract_cust["theme_id"] == "reforma_codigo_civil"
+    assert any("codigo civil" in q for q in contract_cust["collection_query_terms"])
+    assert not any("2338" in q for q in contract_cust["collection_query_terms"])

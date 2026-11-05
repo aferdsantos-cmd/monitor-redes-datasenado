@@ -4,7 +4,10 @@ Pacote de Conectores Reais, Neutralidade Lexical e Orquestração Multi-Platafor
 
 from src.collectors.base_collector import (
     BaseLexicallyNeutralCollector,
+    BUILTIN_EXTENDED_THEMES,
     RawCollectedManifestation,
+    enrich_settings_with_dynamic_themes,
+    register_custom_theme,
 )
 from src.collectors.daily_radar_collector import (
     DailyLegislativeRadarCollector,
@@ -30,7 +33,10 @@ from src.collectors.youtube_collector import YouTubeOfficialCollector
 
 __all__ = [
     "BaseLexicallyNeutralCollector",
+    "BUILTIN_EXTENDED_THEMES",
     "RawCollectedManifestation",
+    "enrich_settings_with_dynamic_themes",
+    "register_custom_theme",
     "YouTubeOfficialCollector",
     "TelegramPublicChannelCollector",
     "XTwitterCollector",

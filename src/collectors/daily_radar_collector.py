@@ -52,6 +52,8 @@ SENATE_COMMITTEES_LEXICON: Dict[str, Dict[str, Any]] = {
             "codigo penal", "pec", "stf", "sistema eleitoral",
             "seguranca juridica", "administracao publica", "processo penal",
             "constituicao federal", "prerrogativas parlamentares",
+            "eleicao presidencia do senado", "presidente do senado",
+            "mesa diretora do senado", "sucessao no senado",
         ],
     },
     "CMA": {
@@ -165,6 +167,17 @@ class DailyLegislativeRadarCollector(BaseLexicallyNeutralCollector):
             elif "6x1" in tid or "escala" in tid:
                 topic_committees[tid].update(["CAS", "CCJ"])
                 topic_relevance[tid] = 0.95
+            elif "presidencia" in tid or "mesa" in tid:
+                topic_committees[tid].update(["CCJ"])
+                topic_relevance[tid] = 0.98
+            elif "senate_committee" in t_cfg:
+                comm_raw = t_cfg["senate_committee"]
+                matched_c = [c for c in SENATE_COMMITTEES_LEXICON.keys() if c in comm_raw]
+                topic_committees[tid].update(matched_c or ["CCJ"])
+                topic_relevance[tid] = 0.90
+            else:
+                topic_committees[tid].add("CCJ")
+                topic_relevance[tid] = 0.85
 
         # Classifica cada manifestação
         for m in day_items:

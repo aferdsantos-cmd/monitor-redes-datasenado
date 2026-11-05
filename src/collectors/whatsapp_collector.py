@@ -19,6 +19,7 @@ from src.collectors.base_collector import (
     BaseLexicallyNeutralCollector,
     RawCollectedManifestation,
     _normalize_text_for_matching,
+    get_dynamic_theme_samples,
 )
 
 # Regex para cabeçalhos de mensagens de exportação do WhatsApp
@@ -311,22 +312,7 @@ class WhatsAppPublicGroupsExportCollector(BaseLexicallyNeutralCollector):
             "27/10/2026 09:05 - +55 61 99888-7766 entrou usando o link de convite deste grupo",
         ]
 
-        if theme_id == "pec_escala_6x1":
-            samples = [
-                "Bom dia pessoal. Compartilhando a discussão da PEC da escala 6x1 e a reducao da jornada sem reducao salarial.\nhttps://senado.leg.br/noticia\nPrecisamos acompanhar #Escala6x1",
-                "O fim da escala 6x1 vai garantir dignidade trabalhador 6x1 para os trabalhadores do comércio.",
-                "Temos que avaliar com prudência o custo para pequenas empresas e o risco de desemprego 6x1 que isso pode causar.",
-                "Sobre a jornada de trabalho 6x1:\nO impacto produtivo escala 6x1 precisa ser debatido com o setor produtivo.",
-                "Excelente iniciativa do Senado em abrir debate sobre a jornada 4x3.",
-            ]
-        else:
-            samples = [
-                "Bom dia a todos. Saiu nova matéria sobre o PL 2338 no Senado.\nProtecao de direitos autorais para autores!\nhttps://senado.leg.br/noticia #PL2338",
-                "O Marco Legal da IA precisa dar seguranca juridica IA e governanca algoritmica responsavel.",
-                "Atenção para o atraso tecnologico e excesso de burocracia estatal no PL 2338/2023 se passar como está.",
-                "Acompanhando a votação da lei da inteligencia artificial hoje pelo canal do Senado.",
-                "Precisamos regular a inteligencia artificial garantindo inovação e soberania digital para o Brasil.",
-            ]
+        samples = get_dynamic_theme_samples(theme_id)
 
         sample_senders = [
             "+55 11 98765-4321",

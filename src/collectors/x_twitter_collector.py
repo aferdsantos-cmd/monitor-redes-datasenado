@@ -21,6 +21,7 @@ from src.collectors.base_collector import (
     BaseLexicallyNeutralCollector,
     RawCollectedManifestation,
     _normalize_text_for_matching,
+    get_dynamic_theme_samples,
 )
 
 TWITTER_API_RECENT_SEARCH_URL = "https://api.twitter.com/2/tweets/search/recent"
@@ -50,9 +51,14 @@ class XTwitterCollector(BaseLexicallyNeutralCollector):
     def enforce_chronological_sort_order(self, sort_order: Optional[str] = "recency") -> str:
         """
         Valida que a ordenação na API v2 do X é estritamente cronológica ('recency').
-        Lança ValueError para qualquer ordenação baseada em relevância, popularidade ou likes.
+        Lança ValueError para qualquer ordenação vazia, None ou baseada em relevância, popularidade ou likes.
         """
-        norm = (sort_order or "recency").strip().lower()
+        if sort_order is None or not isinstance(sort_order, str) or not sort_order.strip():
+            raise ValueError(
+                "VIÉS ALGORÍTMICO BLOQUEADO NO X/TWITTER: sort_order não pode ser vazio ou None. "
+                "Use exclusivamente sort_order='recency'!"
+            )
+        norm = sort_order.strip().lower()
         if norm != "recency":
             raise ValueError(
                 "VIÉS ALGORÍTMICO BLOQUEADO NO X/TWITTER: Coleta observacional na API v2 "
@@ -306,22 +312,7 @@ class XTwitterCollector(BaseLexicallyNeutralCollector):
         Gera payload sintético com formato oficial da API v2 do X/Twitter distribuído em span_days.
         """
         base_dt = datetime(2026, 11, 4, 18, 0, tzinfo=timezone.utc)
-        if theme_id == "pec_escala_6x1":
-            samples = [
-                "Acompanhando o debate sobre a PEC da escala 6x1 e a reducao da jornada sem reducao salarial #Escala6x1 https://senado.leg.br/noticia",
-                "O fim da escala 6x1 e essencial para a dignidade trabalhador 6x1 e saude mental dos trabalhadores.",
-                "Precisamos avaliar o custo para pequenas empresas ao discutir a jornada de trabalho 6x1.",
-                "Alerta para o risco de desemprego 6x1 e o impacto produtivo escala 6x1 em microempresas.",
-                "Excelente sessao na comissao do Senado sobre a jornada 4x3 e modernizacao trabalhista.",
-            ]
-        else:
-            samples = [
-                "Debate relevante no Senado sobre o PL 2338 e protecao de direitos autorais para artistas #PL2338 https://senado.leg.br/noticia",
-                "Marco Legal da IA precisa equilibrar inovacao com seguranca juridica IA e governanca algoritmica responsavel.",
-                "Alerta contra o atraso tecnologico e excesso de burocracia estatal no PL 2338/2023.",
-                "Acompanhando a votacao da lei da inteligencia artificial no Congresso hoje #MarcoLegalIA",
-                "Regular a inteligencia artificial com transparencia algoritmica e responsabilidade civil.",
-            ]
+        samples = get_dynamic_theme_samples(theme_id)
 
         spectra = ["espectro_progressista", "espectro_conservador", "espectro_centro_institucional", "espectro_tecnico_setorial"]
         exponents = ["exp_senado_noticias", "exp_bancada_trabalhista", "exp_frente_empreendedora", "exp_instituto_tecnologia"]
@@ -341,6 +332,7 @@ class XTwitterCollector(BaseLexicallyNeutralCollector):
             exp = exponents[i % len(exponents)]
             geo_hint = sample_ddds[i % len(sample_ddds)]
 
+            extracted_tags = [{"tag": h.lstrip("#")} for h in BaseLexicallyNeutralCollector.extract_hashtags(text)]
             data_items.append({
                 "id": tw_id,
                 "text": text,
@@ -357,7 +349,7 @@ class XTwitterCollector(BaseLexicallyNeutralCollector):
                 },
                 "entities": {
                     "urls": [{"expanded_url": "https://senado.leg.br/noticia"}] if "senado.leg.br" in text else [],
-                    "hashtags": [{"tag": "PL2338"}] if "#PL2338" in text else ([{"tag": "Escala6x1"}] if "#Escala6x1" in text else []),
+                    "hashtags": extracted_tags,
                 },
             })
 

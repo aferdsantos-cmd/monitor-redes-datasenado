@@ -20,6 +20,7 @@ from src.collectors.base_collector import (
     BaseLexicallyNeutralCollector,
     RawCollectedManifestation,
     _normalize_text_for_matching,
+    get_dynamic_theme_samples,
 )
 
 TELEGRAM_API_BASE_URL = "https://api.telegram.org"
@@ -282,51 +283,7 @@ class TelegramPublicChannelCollector(BaseLexicallyNeutralCollector):
         """Gera uma fixture realista de exportacao JSON do Telegram Desktop."""
         base_dt = datetime(2026, 10, 27, 10, 0, tzinfo=timezone.utc)
         messages = []
-
-        if theme_id == "pec_escala_6x1":
-            sample_entities = [
-                [
-                    {"type": "plain", "text": "Novo parecer sobre a "},
-                    {"type": "bold", "text": "PEC escala 6x1"},
-                    {"type": "plain", "text": " publicado. Leiam a integra: "},
-                    {"type": "link", "text": "https://camara.leg.br/escala6x1"},
-                    {"type": "plain", "text": " "},
-                    {"type": "hashtag", "text": "#Escala6x1"},
-                ],
-                [
-                    {"type": "plain", "text": "Debate aberto sobre o fim da escala 6x1 na Câmara. Concordam com o texto? "},
-                    {"type": "hashtag", "text": "#FimDaEscala6x1"},
-                ],
-                "Discussão sobre a jornada de trabalho 6x1 avançou no plenário hoje.",
-                [
-                    {"type": "plain", "text": "Alerta importante sobre a "},
-                    {"type": "link", "text": "https://g1.globo.com/economia/escala6x1"},
-                    {"type": "plain", "text": " na escala 6x1. Vote NÃO se houver risco de desemprego!"},
-                ],
-                "VOTE SIM ao fim da escala 6x1 para garantir dignidade e descanso semanal remunerado.",
-            ]
-        else:
-            sample_entities = [
-                [
-                    {"type": "plain", "text": "Novo parecer do relator sobre o "},
-                    {"type": "bold", "text": "PL 2338/2023"},
-                    {"type": "plain", "text": " publicado. Leiam a integra: "},
-                    {"type": "link", "text": "https://senado.leg.br/pl2338"},
-                    {"type": "plain", "text": " "},
-                    {"type": "hashtag", "text": "#MarcoLegalIA"},
-                ],
-                [
-                    {"type": "plain", "text": "Debate aberto sobre a regulamentação da IA no Senado. Concordam com o texto? "},
-                    {"type": "hashtag", "text": "#PL2338"},
-                ],
-                "Discussão sobre a lei da inteligência artificial avançou na Câmara hoje.",
-                [
-                    {"type": "plain", "text": "Alerta importante sobre o "},
-                    {"type": "link", "text": "https://g1.globo.com/politica/ia-senado"},
-                    {"type": "plain", "text": " no PL 2338. Vote NÃO se houver restrições excessivas!"},
-                ],
-                "VOTE SIM ao PL 2338 para garantir transparência nas redes sociais e evitar deepfakes.",
-            ]
+        sample_entities = get_dynamic_theme_samples(theme_id)
 
         sample_ddds = ["+55 (11) 98765-4321", "+55 (21) 99888-7766", "+55 (71) 98111-2233", "+55 (41) 99222-3344", "+55 (61) 98333-4455", "+55 (92) 99444-5566"]
 

@@ -21,6 +21,7 @@ from src.collectors.base_collector import (
     BaseLexicallyNeutralCollector,
     RawCollectedManifestation,
     _normalize_text_for_matching,
+    get_dynamic_theme_samples,
 )
 
 TIKTOK_RESEARCH_API_URL = "https://open.tiktokapis.com/v2/research/video/comment/list/"
@@ -50,9 +51,14 @@ class TikTokResearchCollector(BaseLexicallyNeutralCollector):
     def enforce_chronological_order(self, order: Optional[str] = "create_time") -> str:
         """
         Valida que a ordenação na TikTok Research API é estritamente cronológica ('create_time' ou 'time').
-        Lança ValueError para qualquer ordenação algorítmica por likes ou relevância.
+        Lança ValueError para qualquer ordenação vazia, None ou algorítmica por likes ou relevância.
         """
-        norm = (order or "create_time").strip().lower()
+        if order is None or not isinstance(order, str) or not order.strip():
+            raise ValueError(
+                "VIÉS ALGORÍTMICO BLOQUEADO NO TIKTOK: order não pode ser vazio ou None. "
+                "Use exclusivamente 'create_time' ou 'time'!"
+            )
+        norm = order.strip().lower()
         if norm not in ("create_time", "time"):
             raise ValueError(
                 "VIÉS ALGORÍTMICO BLOQUEADO NO TIKTOK: Coleta observacional na Research API "
@@ -268,22 +274,7 @@ class TikTokResearchCollector(BaseLexicallyNeutralCollector):
         Gera payload no formato oficial da TikTok Research API distribuído em span_days.
         """
         base_dt = datetime(2026, 11, 4, 18, 0, tzinfo=timezone.utc)
-        if theme_id == "pec_escala_6x1":
-            samples = [
-                "Vídeo muito explicativo sobre a PEC escala 6x1 e a reducao da jornada sem reducao salarial #Escala6x1 https://senado.leg.br/noticia",
-                "O fim da escala 6x1 e questão de dignidade trabalhador 6x1 para a juventude trabalhadora.",
-                "Mas o custo para pequenas empresas e o risco de desemprego 6x1 precisam ser calculados.",
-                "Impacto produtivo escala 6x1 em discussão no Senado Federal hoje com especialistas.",
-                "Apoio a escala 6x1 ser substituída pela jornada 4x3 para termos mais qualidade de vida.",
-            ]
-        else:
-            samples = [
-                "Entenda o PL 2338 e por que a protecao de direitos autorais de criadores de conteúdo é vital #PL2338 https://senado.leg.br/noticia",
-                "Marco Legal da IA precisa dar seguranca juridica IA e incentivar startups brasileiras.",
-                "Cuidado com o atraso tecnologico e excesso de burocracia estatal no PL 2338/2023.",
-                "Acompanhe o debate sobre a lei da inteligencia artificial no plenário do Senado Federal.",
-                "Precisamos regular a inteligencia artificial sem censurar a liberdade criativa digital.",
-            ]
+        samples = get_dynamic_theme_samples(theme_id)
 
         spectra = ["espectro_progressista", "espectro_conservador", "espectro_centro_institucional", "espectro_tecnico_setorial"]
         exponents = ["exp_senado_tiktok", "exp_criador_trabalhista", "exp_canal_empreender", "exp_tech_creator"]
