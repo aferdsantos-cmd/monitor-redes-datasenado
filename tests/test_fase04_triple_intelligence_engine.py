@@ -71,7 +71,9 @@ from src.collectors.base_collector import (
     RawCollectedManifestation,
     register_custom_theme,
 )
+from src.collectors.phase03_six_platforms_orchestrator import Phase03SixPlatformsOrchestrator
 
+REPO_ROOT = Path(__file__).resolve().parent.parent
 
 VALID_32CHAR_SECRET = "k_fase04_audit_datasenado_key_master_2026_xyz"
 
@@ -600,3 +602,174 @@ class TestPhase04EndToEndPipeline:
         if cache_dir.exists():
             total_bytes = sum(f.stat().st_size for f in cache_dir.rglob("*") if f.is_file())
             assert total_bytes == 0
+
+
+# =============================================================================
+# 6. Testes Unitários de Saneamento Definitivo dos 8 Apontamentos de QA (OS v2)
+# =============================================================================
+class TestQAGestaoSaneamentoDefinitivo:
+    """Valida cirurgicamente os 8 apontamentos saneados da Auditoria da Gestão."""
+
+    def test_qa_f04_03_burstiness_variance_and_robust_scaler_metadata(self) -> None:
+        engine_4a = FeatureEngineeringAndAgendaCausalEngine()
+        orch = Phase03SixPlatformsOrchestrator(
+            theme_id="eleicao_presidencia_senado",
+            hmac_secret_key=VALID_32CHAR_SECRET,
+        )
+        batch = orch.generate_multiplatform_manifestations(
+            theme_id="eleicao_presidencia_senado",
+            posts_per_platform=15,
+            span_days=5,
+        )
+        df_temp = engine_4a.compute_causal_temporal_features(batch)
+        assert df_temp["burstiness_b"].nunique() > 1
+        assert (df_temp["burstiness_b"] >= -1.0).all()
+        assert (df_temp["burstiness_b"] <= 1.0).all()
+
+        df_lex = engine_4a.compute_lexical_and_framing_features(batch, theme_id="eleicao_presidencia_senado")
+        df_comb = pd.merge(df_temp, df_lex, on="comment_id", how="left")
+        df_comb["target"] = [i % 2 for i in range(len(df_comb))]
+
+        authors = list(df_comb["author_id_hash"].unique())
+        mid = len(authors) // 2
+        tr_df = df_comb[df_comb["author_id_hash"].isin(authors[:mid])].copy()
+        va_df = df_comb[df_comb["author_id_hash"].isin(authors[mid:])].copy()
+
+        _, _, meta = engine_4a.fit_transform_train_and_transform_val(
+            train_df=tr_df,
+            val_df=va_df,
+            target_col="target",
+            group_col="author_id_hash",
+            numeric_cols=["burstiness_b", "lexical_bias_rate", "type_token_ratio"],
+        )
+        assert "robust_scaler_medians" in meta
+        assert "robust_scaler_iqrs" in meta
+        assert len(meta["robust_scaler_medians"]) > 0
+        assert len(meta["robust_scaler_iqrs"]) > 0
+
+    def test_qa_f04_04_k_anonymity_hierarchical_collapse_and_floor(self) -> None:
+        engine_4a = FeatureEngineeringAndAgendaCausalEngine()
+        df_k = pd.DataFrame({
+            "author_id_hash": [f"wa_{i}" for i in range(3)] + [f"yt_{i}" for i in range(8)],
+            "platform": ["whatsapp"] * 3 + ["youtube"] * 8,
+            "uf_proxy": ["AC"] * 3 + ["SP"] * 8,
+            "stance_label": ["Favoravel"] * 3 + ["Contrario"] * 8,
+        })
+        res = engine_4a.enforce_k_anonymity_aggregation(df_k, group_cols=["platform", "uf_proxy"], k=5)
+        collapsed = any(
+            r.get("platform") == "OUTROS_ANONIMIZADO_LGPD_K5" or r.get("uf_proxy") == "OUTROS_ANONIMIZADO_LGPD_K5"
+            for _, r in res.iterrows()
+        )
+        assert collapsed is True
+        assert all(cnt >= 5 for cnt in res["unique_authors_count"])
+
+    def test_qa_f04_05_mcc_cohens_kappa_val_550_and_mcnemar(self) -> None:
+        engine_4b = CalibratedStanceXAIAndMLOpsEngine()
+        X_tr = np.random.randn(100, 4)
+        y_tr = ["Favoravel"] * 35 + ["Contrario"] * 35 + ["Neutro"] * 30
+        X_va = np.random.randn(50, 4)
+        y_va = ["Favoravel"] * 18 + ["Contrario"] * 17 + ["Neutro"] * 15
+
+        res = engine_4b.train_and_calibrate_stance_classifier(X_tr, y_tr, X_va, y_va)
+        assert hasattr(res, "mcc")
+        assert hasattr(res, "cohens_kappa")
+        assert hasattr(res, "cohens_kappa_ci_95")
+        assert "mcc" in res.blind_validation_metrics
+        assert "cohens_kappa" in res.blind_validation_metrics
+
+        orch = Phase04IntelligenceOrchestrator(
+            theme_id="eleicao_presidencia_senado",
+            hmac_secret_key=VALID_32CHAR_SECRET,
+        )
+        dossier = orch.run_full_intelligence_pipeline(
+            theme_id="eleicao_presidencia_senado",
+            blind_validation_sample_size=550,
+        )
+        val_sz = dossier["engine_4b_calibrated_mlops_and_xai"]["blind_validation_metrics"]["val_sample_size"]
+        assert val_sz == 550
+        assert "mcnemar_test_vs_baseline" in dossier["engine_4b_calibrated_mlops_and_xai"]
+
+    def test_qa_f04_06_no_hardcoded_shap_or_perm_and_lime_explanations(self) -> None:
+        orch_path = REPO_ROOT / "src/analytics/phase04_intelligence_orchestrator.py"
+        src_code = orch_path.read_text(encoding="utf-8")
+        assert "sample_w = np.array([[0.25, -0.15, 0.05]" not in src_code
+        assert "lambda X: (X[:, 0] > 0.0)" not in src_code
+
+        engine_4b = CalibratedStanceXAIAndMLOpsEngine()
+        assert hasattr(engine_4b, "explain_text_instance_lime")
+        lime_out = engine_4b.explain_text_instance_lime(
+            text="Apoio com entusiasmo a transparencia e o fortalecimento institucional do Senado",
+            theme_id="eleicao_presidencia_senado",
+            num_samples=32,
+        )
+        assert "token_weights" in lime_out
+        assert "top_positive_tokens" in lime_out
+        assert "top_negative_tokens" in lime_out
+
+    def test_qa_f04_07_real_rogan_gladen_bridge_and_macro_f1_above_060(self) -> None:
+        orch_path = REPO_ROOT / "src/analytics/phase04_intelligence_orchestrator.py"
+        src_code = orch_path.read_text(encoding="utf-8")
+        assert '.get("FAVORAVEL", 0.90)' not in src_code
+
+        orch = Phase04IntelligenceOrchestrator(
+            theme_id="eleicao_presidencia_senado",
+            hmac_secret_key=VALID_32CHAR_SECRET,
+        )
+        dossier = orch.run_full_intelligence_pipeline(
+            theme_id="eleicao_presidencia_senado",
+            blind_validation_sample_size=100,
+        )
+        bridge = dossier["phase01_statistical_engine_bridge"]
+        assert bridge["calibrated_sensitivity_used"] not in (0.90, None)
+        assert bridge["calibrated_specificity_used"] not in (0.92, None)
+        assert "youden_j_index" in bridge
+        assert "rogan_gladen_corrected_proportion" in bridge
+
+        metrics = dossier["engine_4b_calibrated_mlops_and_xai"]["blind_validation_metrics"]
+        assert metrics["macro_f1"] >= 0.60
+        assert metrics["sensitivities"]["Favoravel"] > 0.20
+
+    def test_qa_f04_08_drift_includes_jsd_divergence(self) -> None:
+        engine_4b = CalibratedStanceXAIAndMLOpsEngine()
+        ref = np.array([0.2, 0.5, 0.3])
+        cur = np.array([0.25, 0.45, 0.3])
+        eval_drift = engine_4b.evaluate_model_drift(ref, cur)
+        assert "jsd_divergence" in eval_drift
+        assert isinstance(eval_drift["jsd_divergence"], float)
+        assert eval_drift["jsd_divergence"] >= 0.0
+
+    def test_qa_f04_10_all_four_official_spectra_present_with_k5(self) -> None:
+        orch = Phase04IntelligenceOrchestrator(
+            theme_id="eleicao_presidencia_senado",
+            hmac_secret_key=VALID_32CHAR_SECRET,
+        )
+        dossier = orch.run_full_intelligence_pipeline(
+            theme_id="eleicao_presidencia_senado",
+            blind_validation_sample_size=60,
+        )
+        spectra = dossier["engine_4c_bubbles_and_spectra"]["spectra_analysis"]
+        spec_ids = {s["spectrum_id"] for s in spectra}
+        assert any("progressista" in sp for sp in spec_ids)
+        assert any("conservador" in sp for sp in spec_ids)
+        assert any("centro" in sp for sp in spec_ids)
+        assert any("setorial" in sp for sp in spec_ids)
+        for s in spectra:
+            if s["spectrum_id"] != "OUTROS_ANONIMIZADO_LGPD_K5":
+                assert s["organic_accounts_N"] >= 5
+
+    def test_qa_f04_11_cusum_and_granger_non_empty_in_contract_360(self) -> None:
+        orch = Phase04IntelligenceOrchestrator(
+            theme_id="eleicao_presidencia_senado",
+            hmac_secret_key=VALID_32CHAR_SECRET,
+        )
+        for theme in ["eleicao_presidencia_senado", "pec_escala_6x1", "pl_ia_2338"]:
+            dossier = orch.run_full_intelligence_pipeline(
+                theme_id=theme,
+                window_spec=MonitoringWindowSpec(window_days=7),
+                blind_validation_sample_size=40,
+            )
+            c360 = dossier["ecosystem_360_interop_contract"]
+            assert c360["structural_break_cusum"] is not None
+            assert isinstance(c360["structural_break_cusum"], dict)
+            assert isinstance(c360["granger_lead_lag_precedence"], list)
+            assert len(c360["granger_lead_lag_precedence"]) > 0

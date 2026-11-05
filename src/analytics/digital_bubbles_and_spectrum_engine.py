@@ -30,11 +30,25 @@ from src.collectors.base_collector import RawCollectedManifestation
 
 
 OFFICIAL_SPECTRA = [
-    "espectro_progressista_governista",
-    "espectro_conservador_oposicao",
+    "espectro_progressista",
+    "espectro_conservador",
     "espectro_centro_institucional",
     "espectro_tecnico_setorial",
 ]
+
+
+def normalize_spectrum_name(raw_name: str) -> str:
+    """Normaliza variantes de nomes de espectros políticos para os 4 oficiais (ADR-010)."""
+    raw = str(raw_name).strip().lower()
+    if "progressista" in raw:
+        return "espectro_progressista"
+    if "conservador" in raw:
+        return "espectro_conservador"
+    if "centro" in raw:
+        return "espectro_centro_institucional"
+    if "setorial" in raw or "tecnico" in raw:
+        return "espectro_tecnico_setorial"
+    return raw
 
 
 @dataclass
@@ -85,7 +99,7 @@ class DigitalBubblesAndSpectrumAnalyzer:
         null_model_permutations: int = 50,
         random_seed: int = 42,
     ) -> None:
-        self.known_spectra = list(known_spectra or OFFICIAL_SPECTRA)
+        self.known_spectra = [normalize_spectrum_name(sp) for sp in list(known_spectra or OFFICIAL_SPECTRA)]
         self.alpha_harmonic = float(alpha_harmonic)
         self.max_harmonic_iter = int(max_harmonic_iter)
         self.convergence_tol = float(convergence_tol)
@@ -571,7 +585,7 @@ class DigitalBubblesAndSpectrumAnalyzer:
         for idx, auth in enumerate(accounts):
             auth_posts = [p for p in clean_items if p.get("author_id_hash") == auth]
             for p in auth_posts:
-                hint = p.get("spectrum_seed_hint") or ""
+                hint = normalize_spectrum_name(p.get("spectrum_seed_hint") or "")
                 if hint in spec_to_idx:
                     seed_acc_indices.append(idx)
                     seed_spec_indices.append(spec_to_idx[hint])

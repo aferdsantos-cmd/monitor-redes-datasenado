@@ -12,6 +12,7 @@ Implementa:
 
 from __future__ import annotations
 
+from collections import Counter, defaultdict
 import copy
 import math
 import re
@@ -335,10 +336,34 @@ class FeatureEngineeringAndAgendaCausalEngine:
 
         df["ewma_velocity"] = np.round(velocity_ewma, 4)
 
-        # 3. Burstiness de Goh-Barabási global e por autor
+        # 3. Burstiness de Goh-Barabási global e dinâmico por linha
         global_burstiness = compute_burstiness(inter_arrivals)
         df["global_burstiness_b"] = global_burstiness
-        df["burstiness_b"] = global_burstiness
+
+        author_history: Dict[str, List[float]] = defaultdict(list)
+        burstiness_per_row = np.zeros(n, dtype=float)
+
+        for i in range(n):
+            cur_sec = timestamps[i].astype("datetime64[ns]").astype(np.int64) / 1e9
+            auth = str(df.iloc[i].get("author_id_hash", "anon"))
+            author_history[auth].append(cur_sec)
+
+            local_slice = inter_arrivals[max(0, i - 8) : i + 1]
+            local_b = compute_burstiness(local_slice)
+
+            auth_times = author_history[auth]
+            if len(auth_times) >= 3:
+                auth_deltas = np.diff(auth_times[-9:])
+                auth_b = compute_burstiness(auth_deltas)
+                row_b = 0.7 * auth_b + 0.3 * local_b
+            elif len(auth_times) == 2:
+                row_b = 0.5 * local_b + 0.5 * global_burstiness
+            else:
+                row_b = 0.5 * local_b
+
+            burstiness_per_row[i] = round(float(np.clip(row_b, -1.0, 1.0)), 4)
+
+        df["burstiness_b"] = burstiness_per_row
 
         return df
 
@@ -402,6 +427,16 @@ class FeatureEngineeringAndAgendaCausalEngine:
             "institutional_and_news_domain_allowlist", ["senado.leg.br", "camara.leg.br", "gov.br"]
         )
 
+        nlp_tax = theme_cfg.get("nlp_stance_taxonomy", {})
+        fav_markers = [str(m).lower() for m in nlp_tax.get("favorable_markers", [])]
+        against_markers = [str(m).lower() for m in nlp_tax.get("against_markers", [])]
+        neutral_markers = [str(m).lower() for m in nlp_tax.get("neutral_markers", [])]
+
+        fav_density_list = []
+        against_density_list = []
+        neutral_density_list = []
+        net_polarity_list = []
+
         for txt in texts:
             tokens = re.findall(r"\w+", txt.lower())
             n_tokens = len(tokens)
@@ -411,6 +446,10 @@ class FeatureEngineeringAndAgendaCausalEngine:
                 punct_density_list.append(0.0)
                 has_news_domain_list.append(0.0)
                 vocab_alignment_list.append(0.0)
+                fav_density_list.append(0.0)
+                against_density_list.append(0.0)
+                neutral_density_list.append(0.0)
+                net_polarity_list.append(0.0)
                 continue
 
             # Type-Token Ratio
@@ -436,12 +475,32 @@ class FeatureEngineeringAndAgendaCausalEngine:
             else:
                 vocab_alignment_list.append(0.0)
 
+            # Densidade semântica de marcadores de stance (ADR-011)
+            txt_lower = txt.lower()
+            fav_c = sum(1 for m in fav_markers if m in txt_lower)
+            against_c = sum(1 for m in against_markers if m in txt_lower)
+            neutral_c = sum(1 for m in neutral_markers if m in txt_lower)
+
+            fav_d = round(fav_c / float(max(1, n_tokens)), 4)
+            against_d = round(against_c / float(max(1, n_tokens)), 4)
+            neutral_d = round(neutral_c / float(max(1, n_tokens)), 4)
+            net_pol = round(float(fav_d - against_d), 4)
+
+            fav_density_list.append(fav_d)
+            against_density_list.append(against_d)
+            neutral_density_list.append(neutral_d)
+            net_polarity_list.append(net_pol)
+
         df_out["lexical_ttr"] = ttr_list
         df_out["type_token_ratio"] = ttr_list
         df_out["lexical_bias_rate"] = bias_rate_list
         df_out["punct_emphasis_density"] = punct_density_list
         df_out["has_news_domain"] = has_news_domain_list
         df_out["neutral_vocab_alignment"] = vocab_alignment_list
+        df_out["fav_marker_density"] = fav_density_list
+        df_out["against_marker_density"] = against_density_list
+        df_out["neutral_marker_density"] = neutral_density_list
+        df_out["net_marker_polarity"] = net_polarity_list
 
         return df_out
 
@@ -555,6 +614,18 @@ class FeatureEngineeringAndAgendaCausalEngine:
         # Remove eventuais constantes
         nums = [c for c in nums if train_out[c].nunique() > 1]
 
+        robust_scaler_medians: Dict[str, float] = {}
+        robust_scaler_iqrs: Dict[str, float] = {}
+
+        for col in nums:
+            med = float(np.median(train_out[col]))
+            q75, q25 = np.percentile(train_out[col], [75, 25])
+            iqr = float(max(q75 - q25, 1e-6))
+            robust_scaler_medians[col] = round(med, 4)
+            robust_scaler_iqrs[col] = round(iqr, 4)
+            train_out[f"{col}_robust_scaled"] = (train_out[col] - med) / iqr
+            val_out[f"{col}_robust_scaled"] = (val_out[col] - med) / iqr
+
         vif_results: Dict[str, float] = {}
         if nums:
             X_tr_num = train_out[nums].values
@@ -563,6 +634,8 @@ class FeatureEngineeringAndAgendaCausalEngine:
         metadata = {
             "train_rows": len(train_out),
             "val_rows": len(val_out),
+            "robust_scaler_medians": robust_scaler_medians,
+            "robust_scaler_iqrs": robust_scaler_iqrs,
             "vif_diagnostics": vif_results,
             "target_encoding": oof_meta,
             "high_vif_features": [f for f, v in vif_results.items() if v >= 5.0],
@@ -611,6 +684,14 @@ class FeatureEngineeringAndAgendaCausalEngine:
             .sum()
             .reset_index()
         )
+
+        # Salvaguarda LGPD Estrita: se alguma célula residual ainda tiver contagem < k,
+        # aplica o piso censurado LGPD para não expor célula com contagem < k.
+        under_k_mask = re_agg["unique_authors_count"] < k
+        if under_k_mask.any():
+            re_agg.loc[under_k_mask, "unique_authors_count"] = k
+            re_agg["k_anonymity_censored_floor"] = True
+
         return re_agg
 
     # =========================================================================
@@ -655,14 +736,36 @@ class FeatureEngineeringAndAgendaCausalEngine:
         if not pd.api.types.is_datetime64_any_dtype(df["created_at"]):
             df["created_at"] = pd.to_datetime(df["created_at"], utc=True)
 
-        # Constrói séries temporais discretizadas (por hora ou período)
-        df["time_bucket"] = df["created_at"].dt.floor("2h")
+        # Constrói séries temporais discretizadas contínuas (freq adaptativa garantindo T >= 24)
+        min_ts = df["created_at"].min()
+        max_ts = df["created_at"].max()
+        time_span_hours = max(0.1, (max_ts - min_ts).total_seconds() / 3600.0)
+
+        min_required_T = max(24, 2 * max_lag + 6)
+        if time_span_hours >= min_required_T:
+            freq_str = "1h"
+        elif time_span_hours >= min_required_T / 2.0:
+            freq_str = "30min"
+        elif time_span_hours >= min_required_T / 4.0:
+            freq_str = "15min"
+        else:
+            freq_str = "5min"
+
+        df["time_bucket"] = df["created_at"].dt.floor(freq_str)
         pivot = (
             df.groupby(["time_bucket", entity_col])
             .size()
             .unstack(fill_value=0)
             .sort_index()
         )
+
+        start_grid = min_ts.floor(freq_str)
+        end_grid = max_ts.ceil(freq_str)
+        full_grid = pd.date_range(start=start_grid, end=end_grid, freq=freq_str, tz=min_ts.tz)
+        if len(full_grid) < min_required_T:
+            full_grid = pd.date_range(start=start_grid, periods=min_required_T, freq=freq_str, tz=min_ts.tz)
+
+        pivot = pivot.reindex(full_grid, fill_value=0)
 
         entities = list(pivot.columns)
         granger_raw: List[Dict[str, Any]] = []
@@ -738,6 +841,8 @@ class FeatureEngineeringAndAgendaCausalEngine:
             "total_entities": len(entities),
             "pairs_tested": len(granger_raw),
             "granger_results": granger_raw,
+            "granger_tests": granger_raw,
             "cusum_alerts": cusum_results,
+            "structural_break_cusum": cusum_results,
             "status": "COMPLETED_OK",
         }

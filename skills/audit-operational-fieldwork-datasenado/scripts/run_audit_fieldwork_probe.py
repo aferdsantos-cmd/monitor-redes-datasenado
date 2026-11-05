@@ -110,7 +110,16 @@ def main() -> int:
             hasher_ok = False
 
     # 3. Executar pytest em modo silencioso
-    pytest_cmd = [str(venv_pytest), "-q"] if venv_pytest.exists() else [py_bin, "-m", "pytest", "-q"]
+    phase_tests = {
+        "Fase_01": "tests/test_fase01_audit_compliance.py",
+        "Fase_02": "tests/test_fase02_duckdb_and_collectors.py",
+        "Fase_03": "tests/test_fase03_six_platforms_and_daily_radar.py",
+        "Fase_04": "tests/test_fase04_triple_intelligence_engine.py",
+    }
+    phase_target = phase_tests.get(args.phase)
+    base_pytest = [str(venv_pytest), "-q"] if venv_pytest.exists() else [py_bin, "-m", "pytest", "-q"]
+    pytest_cmd = base_pytest + ([phase_target] if phase_target else [])
+
     pytest_res = subprocess.run(
         pytest_cmd,
         capture_output=True,
@@ -178,6 +187,12 @@ def main() -> int:
     print()
     print(f"- **Total de Artefatos Mapeados:** {wp_data.get('total_files', 0)} arquivos ({wp_data.get('total_lines', 0):,} linhas | {wp_data.get('secrets_found', 0)} segredos)")
     print("- **Encaminhamento:** Evidências prontas para inclusão em `02_OPERACIONAL_para_SENIOR_Execucao_e_Evidencias_Brutas.md`.")
+
+    # Higiene Zero-Footprint do cache efêmero
+    cache_dir = Path("/tmp/monitor_datasenado_cache")
+    if cache_dir.exists():
+        import shutil
+        shutil.rmtree(cache_dir, ignore_errors=True)
 
     return 0 if all_green else 1
 

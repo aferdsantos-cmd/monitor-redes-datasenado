@@ -251,6 +251,13 @@ class ModelTrainingResults:
     specificities: Dict[str, float]
     youden_indices: Dict[str, float]
     rogan_gladen_status: str
+    mcc: float = 0.0
+    cohens_kappa: float = 0.0
+    cohens_kappa_ci_95: Tuple[float, float] = (0.0, 0.0)
+
+    @property
+    def matthews_corrcoef(self) -> float:
+        return self.mcc
 
     @property
     def blind_validation_metrics(self) -> Dict[str, Any]:
@@ -260,6 +267,10 @@ class ModelTrainingResults:
             "brier_score": self.brier_score,
             "expected_calibration_error": self.expected_calibration_error,
             "macro_f1": self.macro_f1,
+            "mcc": self.mcc,
+            "matthews_corrcoef": self.mcc,
+            "cohens_kappa": self.cohens_kappa,
+            "cohens_kappa_ci_95": self.cohens_kappa_ci_95,
             "confusion_matrix_3x3": self.confusion_matrix_3x3,
             "sensitivities": self.sensitivities,
             "specificities": self.specificities,
@@ -513,6 +524,26 @@ class CalibratedStanceXAIAndMLOpsEngine:
 
         macro_f1 = float(np.mean(f1s))
 
+        # MCC Multiclasse (Gorodkin)
+        c_total = float(np.trace(conf_matrix))
+        s_total = float(np.sum(conf_matrix))
+        p_row = np.sum(conf_matrix, axis=1, dtype=float)
+        t_col = np.sum(conf_matrix, axis=0, dtype=float)
+
+        cov_val = c_total * s_total - float(np.sum(p_row * t_col))
+        var_t = s_total ** 2 - float(np.sum(t_col ** 2))
+        var_p = s_total ** 2 - float(np.sum(p_row ** 2))
+        denom_mcc = math.sqrt(max(0.0, var_t * var_p))
+        mcc_val = cov_val / denom_mcc if denom_mcc > 1e-12 else 0.0
+
+        # Cohen's Kappa e Intervalo de Confiança 95%
+        p_o = c_total / s_total if s_total > 0 else 0.0
+        p_e = float(np.sum(p_row * t_col)) / (s_total ** 2) if s_total > 0 else 0.0
+        kappa_val = (p_o - p_e) / (1.0 - p_e) if (1.0 - p_e) > 1e-12 else 0.0
+        se_kappa = math.sqrt(max(0.0, (p_o * (1.0 - p_o)) / (s_total * ((1.0 - p_e) ** 2)))) if (s_total > 0 and (1.0 - p_e) > 1e-12) else 0.0
+        ci_low = max(-1.0, kappa_val - 1.96 * se_kappa)
+        ci_high = min(1.0, kappa_val + 1.96 * se_kappa)
+
         # Trava do Ponto de Ruptura de Youden (J_c <= 0.20)
         critical_classes = [c for c, j in youdens.items() if j <= 0.20]
         rogan_gladen_status = (
@@ -538,6 +569,9 @@ class CalibratedStanceXAIAndMLOpsEngine:
             specificities=specificities,
             youden_indices=youdens,
             rogan_gladen_status=rogan_gladen_status,
+            mcc=round(float(mcc_val), 4),
+            cohens_kappa=round(float(kappa_val), 4),
+            cohens_kappa_ci_95=(round(float(ci_low), 4), round(float(ci_high), 4)),
         )
 
     # =========================================================================
@@ -664,6 +698,100 @@ class CalibratedStanceXAIAndMLOpsEngine:
             "requires_stratified_rogan_gladen": requires_stratified,
         }
 
+    def explain_text_instance_lime(
+        self,
+        text: str,
+        theme_id: str,
+        num_samples: int = 64,
+        predict_fn: Optional[Callable[[Sequence[str]], np.ndarray]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Explicabilidade Local LIME baseada em texto: perturba tokens do texto
+        com dropout, obtém predições ponderadas por proximidade e ajusta modelo
+        linear local para obter a importância de cada termo.
+        """
+        tokens = re.findall(r"\w+", text.lower())
+        if not tokens:
+            return {
+                "original_text": text,
+                "token_weights": {},
+                "top_positive_tokens": [],
+                "top_negative_tokens": [],
+                "r2_local_surrogate": 1.0,
+            }
+
+        rng = np.random.default_rng(42)
+        unique_tokens = list(dict.fromkeys(tokens))
+        d = len(unique_tokens)
+
+        # Matriz binária de presença de tokens nas amostras perturbadas
+        Z = np.ones((num_samples, d), dtype=float)
+        perturbed_texts = [text]
+
+        for s in range(1, num_samples):
+            mask = rng.random(d) > 0.25
+            if not np.any(mask):
+                mask[rng.integers(0, d)] = True
+            Z[s] = mask.astype(float)
+            active_set = {unique_tokens[j] for j in range(d) if mask[j]}
+            sub_toks = [t for t in tokens if t in active_set]
+            perturbed_texts.append(" ".join(sub_toks) if sub_toks else "neutro")
+
+        if predict_fn is not None:
+            preds = predict_fn(perturbed_texts)
+        else:
+            themes_map = {t["id"]: t for t in self.settings.get("pilot_themes", []) if isinstance(t, dict) and "id" in t}
+            theme_cfg = themes_map.get(theme_id, {})
+            nlp_tax = theme_cfg.get("nlp_stance_taxonomy", {})
+            fav_m = set(m.lower() for m in nlp_tax.get("favorable_markers", []))
+            aga_m = set(m.lower() for m in nlp_tax.get("against_markers", []))
+
+            preds = np.zeros((num_samples, 3), dtype=float)
+            for s, p_txt in enumerate(perturbed_texts):
+                toks_s = set(re.findall(r"\w+", p_txt.lower()))
+                fav_h = len(toks_s & fav_m)
+                aga_h = len(toks_s & aga_m)
+                if fav_h > aga_h:
+                    preds[s] = [0.70, 0.15, 0.15]
+                elif aga_h > fav_h:
+                    preds[s] = [0.15, 0.70, 0.15]
+                else:
+                    preds[s] = [0.20, 0.20, 0.60]
+
+        orig_pred = preds[0]
+        target_class_idx = int(np.argmax(orig_pred)) if orig_pred.ndim > 0 else 0
+        y_target = preds[:, target_class_idx] if preds.ndim > 1 else preds
+
+        distances = np.mean(1.0 - Z, axis=1)
+        kernel_width = 0.5
+        weights_w = np.exp(-(distances ** 2) / (kernel_width ** 2))
+        W_sqrt = np.diag(np.sqrt(weights_w))
+
+        Z_weighted = W_sqrt @ Z
+        y_weighted = W_sqrt @ y_target
+
+        try:
+            beta, _, _, _ = np.linalg.lstsq(Z_weighted, y_weighted, rcond=None)
+            pred_surrogate = Z @ beta
+            ss_tot = np.sum(weights_w * (y_target - np.mean(y_target)) ** 2)
+            ss_res = np.sum(weights_w * (y_target - pred_surrogate) ** 2)
+            r2 = float(1.0 - ss_res / ss_tot) if ss_tot > 1e-12 else 1.0
+        except Exception:
+            beta = np.zeros(d)
+            r2 = 0.0
+
+        token_weights = {unique_tokens[j]: round(float(beta[j]), 4) for j in range(d)}
+        sorted_tokens = sorted(token_weights.items(), key=lambda kv: kv[1], reverse=True)
+
+        return {
+            "original_text": text[:120] + ("..." if len(text) > 120 else ""),
+            "explained_stance_class": self.STANCE_CLASSES[target_class_idx] if target_class_idx < len(self.STANCE_CLASSES) else "Favoravel",
+            "token_weights": token_weights,
+            "top_positive_tokens": [k for k, v in sorted_tokens if v > 0][:5],
+            "top_negative_tokens": [k for k, v in reversed(sorted_tokens) if v < 0][:5],
+            "r2_local_surrogate": round(float(np.clip(r2, 0.0, 1.0)), 4),
+        }
+
     # =========================================================================
     # 5. Governança MLOps: Monitoramento de Drift e Model Card
     # =========================================================================
@@ -678,6 +806,23 @@ class CalibratedStanceXAIAndMLOpsEngine:
         psi_val = calculate_psi(reference_scores, current_scores)
         ks_res = calculate_ks_statistic(reference_scores, current_scores)
 
+        # Divergência de Jensen-Shannon (JSD) sobre histogramas comuns
+        ref_c = reference_scores[~np.isnan(reference_scores)]
+        cur_c = current_scores[~np.isnan(current_scores)]
+        if len(ref_c) > 0 and len(cur_c) > 0:
+            bins = np.linspace(
+                min(float(np.min(ref_c)), float(np.min(cur_c))),
+                max(float(np.max(ref_c)), float(np.max(cur_c))) + 1e-5,
+                11,
+            )
+            h_ref, _ = np.histogram(ref_c, bins=bins)
+            h_cur, _ = np.histogram(cur_c, bins=bins)
+            p_hist = (h_ref + 1e-4) / float(np.sum(h_ref) + 1e-4 * len(h_ref))
+            q_hist = (h_cur + 1e-4) / float(np.sum(h_cur) + 1e-4 * len(h_cur))
+            jsd_val = calculate_jsd(p_hist, q_hist)
+        else:
+            jsd_val = 0.0
+
         if psi_val < 0.10:
             status = "VERDE_ESTAVEL"
         elif psi_val < 0.25:
@@ -688,6 +833,7 @@ class CalibratedStanceXAIAndMLOpsEngine:
         return {
             "psi_score": round(psi_val, 4),
             "psi_traffic_light": status,
+            "jsd_divergence": round(float(jsd_val), 4),
             "ks_statistic": ks_res["ks_statistic"],
             "ks_p_value": ks_res["p_value_approx"],
             "recalibration_required": (status == "VERMELHO_DRIFT_CRITICO_RECALIBRACAO_OBRIGATORIA"),
