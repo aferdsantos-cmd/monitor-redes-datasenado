@@ -38,3 +38,7 @@ Orquestrador dos 5 Pilares de Excelência em Estatística Amostral, Econometria 
   - [formulas_and_invariants.md](./references/formulas_and_invariants.md)
   - [cib_network_thresholds.md](./references/cib_network_thresholds.md)
   - [r_and_python_survey_econometrics.md](./references/r_and_python_survey_econometrics.md)
+
+## 6. Roteamento do Grupo Estatística e Modelagem (Zero Sobreposição)
+- **Modelagem e Calibração:** Para treinamento de classificadores, validação `StratifiedGroupKFold`, calibração de probabilidades e FDR: use `ds-ml-modeling-and-validation`.
+- **Bolhas e Séries Temporais:** Para topologia de Bolhas Digitais Orgânicas (`ADR-010` — Modularidade $Q$, Índice $E\text{-}I$), propagação de Expoentes-Semente de Espectros Políticos e causalidade temporal de agenda (`ADR-008`): use `stats-network-bubbles-and-time-series`.

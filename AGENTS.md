@@ -1,9 +1,12 @@
 # Diretrizes Operacionais — Monitor de Redes DataSenado (TCC)
 
-## 1. Arquitetura Dual-Agent & Economia de Tokens
+## 1. Arquitetura Dual-Agent, Catálogo de Skills & Economia de Tokens
 - **Chat Cérebro (Planejador/Auditor):** Emite Ordens de Serviço (`Auditorias/Fase_XX/00_Ordens_de_Servico/`) e audita entregas. Não edita `src/` diretamente.
 - **Chat Operador (Executor):** Implementa código conforme a OS, valida testes (`100% green, 0 warnings`) e gera relatórios em `Auditorias/Fase_XX/03_Entregas_Implementacao/`.
 - **Higiene de Contexto:** Use leitura cirúrgica (`StartLine`/`EndLine`). Carregue a skill específica da tarefa em `skills/<nome>/SKILL.md` antes de agir. Só leia `references/` quando estritamente necessário.
+- **Catálogo das 13 Skills do Projeto (Zero Sobreposição):**
+  - *Núcleo de Engenharia, Governança e Auditoria (6):* `eng-python-zero-footprint`, `brain-operator-protocol`, `academic-tcc-datasenado`, `stats-inference-datasenado`, `audit-iia-iso31000-datasenado`, `audit-operational-fieldwork-datasenado`.
+  - *Suíte de Ciência de Dados & Estatística Avançada (7):* `ds-eda-and-vectorized-manipulation`, `ds-advanced-feature-engineering`, `ds-ml-modeling-and-validation`, `stats-network-bubbles-and-time-series`, `ds-xai-and-model-explainability`, `ds-mlops-and-model-lifecycle`, `ds-deep-learning-nlp-and-vision`.
 
 ## 2. Binários e Ambiente (Sem Xcode CLT)
 - Python/Testes: `/Users/anderson/.local/bin/uv run --extra dev pytest -v`
