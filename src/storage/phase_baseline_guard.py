@@ -477,8 +477,15 @@ if __name__ == "__main__":
     elif "--ensure-tag" in sys.argv:
         guard.ensure_github_baseline_tag()
     elif "--sync" in sys.argv:
-        msg = sys.argv[sys.argv.index("--sync") + 1] if len(sys.argv) > sys.argv.index("--sync") + 1 else "Milestone v2.0.0-fase02: Implementacao Inicial de Governanca, DuckDB Medallion Lake e Conectores YouTube/Telegram"
-        sync_res = guard.sync_repository_with_governance(commit_message=msg, tag_name="v2.0.0-fase02-inicial")
+        msg = sys.argv[sys.argv.index("--sync") + 1] if len(sys.argv) > sys.argv.index("--sync") + 1 else "Milestone v3.0.0-fase03: Conectores 6 Plataformas, Radar Diario e Emenda Diretora v2.2"
+        tag = None
+        if "--tag" in sys.argv and len(sys.argv) > sys.argv.index("--tag") + 1:
+            tag = sys.argv[sys.argv.index("--tag") + 1]
+        elif "fase03" in msg.lower():
+            tag = "v3.0.0-fase03-inicial"
+        else:
+            tag = "v2.0.0-fase02-inicial"
+        sync_res = guard.sync_repository_with_governance(commit_message=msg, tag_name=tag)
         print(json.dumps(sync_res, indent=2))
     else:
         res = guard.verify_baseline_integrity()
