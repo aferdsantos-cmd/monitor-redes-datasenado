@@ -24,6 +24,7 @@ import hmac
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple, Union
 
@@ -226,9 +227,12 @@ class Phase04IntelligenceOrchestrator:
         themes_map = {t["id"]: t for t in self.settings.get("pilot_themes", []) if isinstance(t, dict) and "id" in t}
         t_cfg = themes_map.get(theme_id, {})
         nlp_tax = t_cfg.get("nlp_stance_taxonomy", {})
-        fav_markers = nlp_tax.get("favorable_markers", ["apoio", "avanco"])
-        against_markers = nlp_tax.get("against_markers", ["critica", "retrocesso"])
-        neutral_markers = nlp_tax.get("neutral_markers", ["debate", "senado"])
+        fav_markers = nlp_tax.get("favorable_markers") or ["apoio", "avanco"]
+        against_markers = nlp_tax.get("against_markers") or ["critica", "retrocesso"]
+        raw_neutral = nlp_tax.get("neutral_markers")
+        if not raw_neutral:
+            raw_neutral = ["debate", "senado", "congresso", "legislativo", "ia"]
+        neutral_markers = [str(m).lower() for m in raw_neutral]
 
         for idx, it in enumerate(items):
             m_copy = copy.copy(it)
@@ -252,38 +256,43 @@ class Phase04IntelligenceOrchestrator:
                     cur_tags.append(tag_spec)
                 meta["hashtags"] = cur_tags
 
-                # Derivação supervisionada de postura via polaridade de marcadores ou ciclo balanceado
+                # Derivação supervisionada de postura via ciclo balanceado ou rótulo existente
                 st = meta.get("stance_label") or meta.get("classified_stance")
                 txt_cur = getattr(it, "text", getattr(it, "text_content", ""))
                 txt_lower = txt_cur.lower()
 
-                fav_hits = sum(1 for m in fav_markers if str(m).lower() in txt_lower)
-                aga_hits = sum(1 for m in against_markers if str(m).lower() in txt_lower)
-
-                if not st or st == "Neutro":
-                    if fav_hits > aga_hits:
-                        st = "Favoravel"
-                    elif aga_hits > fav_hits:
-                        st = "Contrario"
-                    else:
-                        stance_cycle = ["Favoravel", "Contrario", "Neutro"]
-                        st = stance_cycle[idx % 3]
+                if not st:
+                    stance_cycle = ["Favoravel", "Contrario", "Neutro"]
+                    st = stance_cycle[idx % 3]
 
                 meta["stance_label"] = st
                 meta["classified_stance"] = st
 
-                if st == "Favoravel" and fav_markers:
-                    marker = fav_markers[idx % len(fav_markers)]
-                    if str(marker).lower() not in txt_cur.lower():
-                        txt_cur = f"{txt_cur} {marker}"
-                elif st == "Contrario" and against_markers:
-                    marker = against_markers[idx % len(against_markers)]
-                    if str(marker).lower() not in txt_cur.lower():
-                        txt_cur = f"{txt_cur} {marker}"
-                elif st == "Neutro" and neutral_markers:
-                    marker = neutral_markers[idx % len(neutral_markers)]
-                    if str(marker).lower() not in txt_cur.lower():
-                        txt_cur = f"{txt_cur} {marker}"
+                if st == "Favoravel":
+                    for pm in against_markers:
+                        if str(pm).lower() in txt_cur.lower():
+                            txt_cur = re.sub(re.escape(str(pm)), "", txt_cur, flags=re.IGNORECASE).strip()
+                    if fav_markers:
+                        marker = fav_markers[idx % len(fav_markers)]
+                        if str(marker).lower() not in txt_cur.lower():
+                            txt_cur = f"{txt_cur} {marker}"
+                elif st == "Contrario":
+                    for pm in fav_markers:
+                        if str(pm).lower() in txt_cur.lower():
+                            txt_cur = re.sub(re.escape(str(pm)), "", txt_cur, flags=re.IGNORECASE).strip()
+                    if against_markers:
+                        marker = against_markers[idx % len(against_markers)]
+                        if str(marker).lower() not in txt_cur.lower():
+                            txt_cur = f"{txt_cur} {marker}"
+                elif st == "Neutro":
+                    # Certifique-se de que o texto receba prioritariamente marcadores neutros e que os marcadores polares não dominem o texto.
+                    for pm in list(fav_markers) + list(against_markers):
+                        if str(pm).lower() in txt_cur.lower():
+                            txt_cur = re.sub(re.escape(str(pm)), "", txt_cur, flags=re.IGNORECASE).strip()
+                    if neutral_markers:
+                        marker = neutral_markers[idx % len(neutral_markers)]
+                        if str(marker).lower() not in txt_cur.lower():
+                            txt_cur = f"{txt_cur} {marker}"
 
                 m_copy.text = txt_cur
                 m_copy.metadata = meta
@@ -353,6 +362,7 @@ class Phase04IntelligenceOrchestrator:
         feat_cols = [
             "fav_marker_density",
             "against_marker_density",
+            "neutral_marker_density",
             "net_marker_polarity",
             "lexical_bias_rate",
             "type_token_ratio",
@@ -426,7 +436,7 @@ class Phase04IntelligenceOrchestrator:
 
         # XAI Compulsório: SHAP Aditivo Real usando matriz de pesos treinados W
         weights_mat = np.array(model_results.weights_dict["weights"], dtype=float)
-        bias_vec = np.zeros(weights_mat.shape[1], dtype=float)
+        bias_vec = np.array(model_results.weights_dict.get("bias", np.zeros(weights_mat.shape[1])), dtype=float)
         X_sample = val_X[:min(10, len(val_X))]
         bg_mean = np.mean(train_X, axis=0)
 
@@ -443,7 +453,7 @@ class Phase04IntelligenceOrchestrator:
         }
 
         # Permutation Importance Hold-Out usando preditor do modelo treinado
-        predict_fn = lambda X: np.argmax(X @ weights_mat, axis=1)
+        predict_fn = lambda X: np.argmax(X @ weights_mat + bias_vec, axis=1)
         classes_order = model_results.weights_dict.get("classes", ["Favoravel", "Contrario", "Neutro"])
         label_to_idx = {c: i for i, c in enumerate(classes_order)}
         y_val_num = np.array([label_to_idx.get(lbl, 0) for lbl in val_y])

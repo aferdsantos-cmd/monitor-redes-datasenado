@@ -428,9 +428,12 @@ class FeatureEngineeringAndAgendaCausalEngine:
         )
 
         nlp_tax = theme_cfg.get("nlp_stance_taxonomy", {})
-        fav_markers = [str(m).lower() for m in nlp_tax.get("favorable_markers", [])]
-        against_markers = [str(m).lower() for m in nlp_tax.get("against_markers", [])]
-        neutral_markers = [str(m).lower() for m in nlp_tax.get("neutral_markers", [])]
+        fav_markers = [str(m).lower() for m in (nlp_tax.get("favorable_markers") or [])]
+        against_markers = [str(m).lower() for m in (nlp_tax.get("against_markers") or [])]
+        raw_neutral = nlp_tax.get("neutral_markers")
+        if not raw_neutral:
+            raw_neutral = ["debate", "senado", "congresso", "legislativo", "ia"]
+        neutral_markers = [str(m).lower() for m in raw_neutral]
 
         fav_density_list = []
         against_density_list = []

@@ -465,14 +465,20 @@ class CalibratedStanceXAIAndMLOpsEngine:
         for i, val in enumerate(y_tr):
             Y_tr_oh[i, val] = 1.0
 
-        # Treina pesos multiclasse via Ridge matricial: W = (X^T X + lambda I)^(-1) X^T Y
+        # Treina pesos multiclasse via Ridge matricial com termo de intercepto (bias):
+        mu_X = np.mean(X_tr, axis=0)
+        mu_Y = np.mean(Y_tr_oh, axis=0)
+        X_tr_c = X_tr - mu_X
+        Y_tr_c = Y_tr_oh - mu_Y
+
         reg_lambda = 1.0
-        A = X_tr.T @ X_tr + reg_lambda * np.eye(dim)
-        B = X_tr.T @ Y_tr_oh
+        A = X_tr_c.T @ X_tr_c + reg_lambda * np.eye(dim)
+        B = X_tr_c.T @ Y_tr_c
         W = np.linalg.solve(A, B)
+        bias = mu_Y - mu_X @ W
 
         # Predição de logits no conjunto de validação
-        logits_val = X_val @ W
+        logits_val = X_val @ W + bias
         # Calibração via Softmax com temperatura
         scaled_logits = logits_val / max(0.1, temperature)
         exp_logits = np.exp(scaled_logits - np.max(scaled_logits, axis=1, keepdims=True))
@@ -552,6 +558,7 @@ class CalibratedStanceXAIAndMLOpsEngine:
 
         model_weights_dict = {
             "weights": W.tolist(),
+            "bias": bias.tolist(),
             "temperature": temperature,
             "classes": classes,
         }

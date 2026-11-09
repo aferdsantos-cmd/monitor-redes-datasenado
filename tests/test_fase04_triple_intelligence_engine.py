@@ -773,3 +773,23 @@ class TestQAGestaoSaneamentoDefinitivo:
             assert isinstance(c360["structural_break_cusum"], dict)
             assert isinstance(c360["granger_lead_lag_precedence"], list)
             assert len(c360["granger_lead_lag_precedence"]) > 0
+
+    def test_pvq_gestao_f04_v2_guarantee3_neutral_calibration_and_youden_all_themes(self) -> None:
+        """Valida que em todos os 3 temas oficiais a classe Neutro é calibrada com Se > 0.20 e sem alerta de Youden."""
+        orch = Phase04IntelligenceOrchestrator(
+            theme_id="pl_ia_2338",
+            hmac_secret_key=VALID_32CHAR_SECRET,
+        )
+        for theme in ["eleicao_presidencia_senado", "pec_escala_6x1", "pl_ia_2338"]:
+            dossier = orch.run_full_intelligence_pipeline(
+                theme_id=theme,
+                blind_validation_sample_size=120,
+            )
+            m = dossier["engine_4b_calibrated_mlops_and_xai"]["blind_validation_metrics"]
+            y_alert = dossier["engine_4b_calibrated_mlops_and_xai"]["youden_breaking_point_alert"]
+            assert m["macro_f1"] >= 0.60
+            assert m["sensitivities"]["Favoravel"] > 0.20
+            assert m["sensitivities"]["Contrario"] > 0.20
+            assert m["sensitivities"]["Neutro"] > 0.20
+            assert y_alert is False
+

@@ -182,8 +182,8 @@ def test_agents_md_and_existing_skills_respect_wp16_bounds():
     eng_content = "\n".join(eng_lines)
     academic_content = "\n".join(academic_lines)
 
-    # Verifica se as 17 skills estão referenciadas
-    assert "Catálogo das 17 Skills do Projeto" in agents_content or "17" in agents_content
+    # Verifica se as skills do projeto estão referenciadas
+    assert "Catálogo das" in agents_content and ("17" in agents_content or "18" in agents_content)
     assert "ui-ux-design-system-and-anti-ai-craft" in agents_content
     assert "fe-react-tailwind-radix-architecture" in agents_content
     assert "fe-data-viz-grids-maps-and-export" in agents_content
