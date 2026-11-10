@@ -283,6 +283,13 @@ export interface ThemeDataset {
   connectorSessions?: ConnectorSessionInfo[];
   rateLimitAlert?: RateLimitAlertInfo;
   subrepresentationAlert?: { region: string; n: number; message: string };
+  humanGates?: HumanGatesState;
+  bronzeSampleRecords?: BronzeSampleRecord[];
+  silverQuarantineRecords?: SilverQuarantineRecord[];
+  silverOrganicRecords?: SilverOrganicRecord[];
+  goldSampleUnits?: GoldSampleUnit[];
+  blindAuditItems?: BlindHumanAuditItem[];
+  humanCalibration?: HumanCalibrationMetrics;
 }
 
 export type LifecycleStatus =
@@ -293,6 +300,147 @@ export type LifecycleStatus =
   | 'CALIBRACAO_RAKING_IPF_ROGAN_GLADEN'
   | 'PRONTO_PARA_ANALISE_E_BOLETIM'
   | 'ALERTA_OPERACIONAL_BACKOFF_OU_CREDENCIAIS';
+
+export type HumanGateStatus =
+  | 'PENDENTE_APROVACAO_HUMANA'
+  | 'APROVADO_PELO_ANALISTA'
+  | 'REJEITADO_REPROCESSANDO'
+  | 'BLOQUEADO_AGUARDANDO_CAMADA_ANTERIOR';
+
+export interface HumanGateInfo {
+  gateId: string;
+  name: string;
+  status: HumanGateStatus;
+  approvedAt?: string | null;
+  approvedBy?: string | null;
+  notes?: string;
+  excludedRecordIds?: string[];
+  overriddenToOrganicIds?: string[];
+  overriddenToQuarantineIds?: string[];
+  randomSeed?: number;
+  targetSampleSize?: number;
+}
+
+export interface HumanGatesState {
+  bronzeGate: HumanGateInfo;
+  silverGate: HumanGateInfo;
+  goldGate: HumanGateInfo;
+}
+
+export interface BronzeSampleRecord {
+  id: string;
+  timestampUtc: string;
+  platform: PlatformId;
+  uf: string;
+  queryUsed: string;
+  rawText: string;
+  isExcluded: boolean;
+}
+
+export interface SilverQuarantineRecord {
+  id: string;
+  timestampUtc: string;
+  platform: PlatformId;
+  uf: string;
+  reasonTag: string;
+  reasonDescription: string;
+  rawText: string;
+  isRescuedOrganic: boolean;
+}
+
+export interface SilverOrganicRecord {
+  id: string;
+  authorIdHash: string;
+  timestampUtc: string;
+  platform: PlatformId;
+  uf: string;
+  postCount: number;
+  sanitizedSnippet: string;
+  isManualQuarantine: boolean;
+}
+
+export interface GoldSampleUnit {
+  id: string;
+  authorIdHash: string;
+  platform: PlatformId;
+  uf: string;
+  macroregion: string;
+  postsCollapsed: number;
+  hajekWeight: number;
+  rakingWeight: number;
+  sanitizedText: string;
+  stance: Stance;
+}
+
+export interface BlindHumanAuditItem {
+  id: string;
+  sanitizedText: string;
+  platform: PlatformId;
+  uf: string;
+  aiPredictedStance: Stance;
+  aiConfidence: number;
+  aiKeyTerms: string[];
+  humanStance?: Stance;
+  match?: boolean;
+}
+
+export interface ConfusionMatrix3x3 {
+  favoravel: { favoravel: number; contrario: number; neutro: number };
+  contrario: { favoravel: number; contrario: number; neutro: number };
+  neutro: { favoravel: number; contrario: number; neutro: number };
+}
+
+export interface HumanCalibrationMetrics {
+  totalAudited: number;
+  confusionMatrix: ConfusionMatrix3x3;
+  cohenKappa: number;
+  sensitivity: number;
+  specificity: number;
+  youdenJ: number;
+  roganGladenPrevalence: number;
+  matchRate: number;
+}
+
+export interface SandboxStepResult {
+  step1_lgpd: {
+    original_text: string;
+    scrubbed_text: string;
+    author_id_hash: string;
+    author_pii_cleared: boolean;
+    protocol: string;
+  };
+  step2_silver_cib: {
+    minhash_signature: string;
+    commercial_spam_score: number;
+    burstiness_index: number;
+    verdict: 'ORGANICO' | 'QUARENTENA';
+    reason_tag: string;
+  };
+  step3_feature_engineering: {
+    token_count: number;
+    lexical_bias_score: number;
+    framing_detected: string;
+    bias_terms_found: string[];
+  };
+  step4_classifier_xai: {
+    probabilities: { favoravel: number; contrario: number; neutro: number };
+    predicted_stance: Stance;
+    shap_tokens: { token: string; weight: number; impacts_stance: Stance }[];
+  };
+  step5_digital_spectrum: {
+    primary_spectrum_id: string;
+    primary_spectrum_name: string;
+    harmonic_affinity: Record<string, number>;
+  };
+  step6_sample_weighting: {
+    single_account_weight_hajek: number;
+    macroregion: string;
+    raking_ipf_weight: number;
+    simplex_clipped: boolean;
+    rogan_gladen_formula: string;
+    rogan_gladen_impact: string;
+  };
+}
 
 export interface ConnectorSessionInfo {
   platformId: PlatformId;

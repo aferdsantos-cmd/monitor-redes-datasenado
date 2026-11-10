@@ -4,11 +4,13 @@ import {
   Network,
   Radio,
   FileText,
+  ShieldCheck,
+  BookOpen,
   ChevronLeft,
   ChevronRight,
 } from 'lucide-react';
 
-export type ActiveModuleId = 'module_1' | 'module_2' | 'module_3' | 'module_4';
+export type ActiveModuleId = 'module_1' | 'module_2' | 'module_3' | 'module_4' | 'module_5' | 'module_6';
 
 interface NavigationSidebarProps {
   activeModule: ActiveModuleId;
@@ -49,6 +51,18 @@ export const NavigationSidebar: React.FC<NavigationSidebarProps> = ({
       label: 'Relatórios & Notas',
       subtitle: 'Síntese descritiva e PDF',
       icon: FileText,
+    },
+    {
+      id: 'module_5' as ActiveModuleId,
+      label: 'Validação Humana & Camadas',
+      subtitle: 'Bronze, Silver, Gold & Sandbox',
+      icon: ShieldCheck,
+    },
+    {
+      id: 'module_6' as ActiveModuleId,
+      label: 'Metodologia & Ciência',
+      subtitle: 'Tratado bilíngue e estudos',
+      icon: BookOpen,
     },
   ];
 

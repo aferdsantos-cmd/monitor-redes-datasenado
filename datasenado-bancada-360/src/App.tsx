@@ -7,6 +7,8 @@ import { Module1Inference } from './components/modules/Module1Inference';
 import { Module2Bubbles } from './components/modules/Module2Bubbles';
 import { Module3LegislativeRadar } from './components/modules/Module3LegislativeRadar';
 import { Module4ReportsEcosystem } from './components/modules/Module4ReportsEcosystem';
+import { Module5HumanValidationAndLayers } from './components/modules/Module5HumanValidationAndLayers';
+import { Module6MethodologyAndScience } from './components/modules/Module6MethodologyAndScience';
 import { SkeletonCard } from './components/SkeletonCard';
 import { NewThemeModal } from './components/modals/NewThemeModal';
 import { XaiInspectionDrawer } from './components/modals/XaiInspectionDrawer';
@@ -62,6 +64,30 @@ export function DataSenadoApp() {
       }
     }
   }, []);
+
+  useEffect(() => {
+    // Sincronização automática reativa com o Servidor Local Python REST se ativo
+    const fetchBackendTheme = async () => {
+      try {
+        const res = await fetch(`/api/themes/${currentThemeId}?window=${timeWindow}&n=${goldSampleSize}`);
+        if (res.ok) {
+          const liveData = await res.json();
+          if (liveData && liveData.id) {
+            setThemesMap((prev) => ({
+              ...prev,
+              [currentThemeId]: {
+                ...prev[currentThemeId],
+                ...liveData,
+              },
+            }));
+          }
+        }
+      } catch {
+        // Fallback transparente em memória RAM
+      }
+    };
+    fetchBackendTheme();
+  }, [currentThemeId, timeWindow, goldSampleSize]);
 
   const handleAdvanceLifecycle = () => {
     const currentStatus = currentDataset?.lifecycleStatus || 'PRONTO_PARA_ANALISE_E_BOLETIM';
@@ -273,6 +299,8 @@ export function DataSenadoApp() {
             onAdvanceLifecycle={handleAdvanceLifecycle}
             rateLimitAlert={currentDataset?.rateLimitAlert || null}
             subrepresentationAlert={currentDataset?.subrepresentationAlert || null}
+            humanGates={currentDataset?.humanGates}
+            onNavigateToHumanGates={() => setActiveModule('module_5')}
           />
 
           <div className="flex-1 flex overflow-hidden">
@@ -322,6 +350,14 @@ export function DataSenadoApp() {
 
                   {activeModule === 'module_4' && (
                     <Module4ReportsEcosystem dataset={currentDataset} />
+                  )}
+
+                  {activeModule === 'module_5' && (
+                    <Module5HumanValidationAndLayers dataset={currentDataset} />
+                  )}
+
+                  {activeModule === 'module_6' && (
+                    <Module6MethodologyAndScience dataset={currentDataset} />
                   )}
                 </>
               )}

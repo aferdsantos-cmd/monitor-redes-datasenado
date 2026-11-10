@@ -14,7 +14,7 @@ import {
   AlertTriangle,
   ShieldCheck,
 } from 'lucide-react';
-import { PlatformId, TimeWindow, LifecycleStatus, RateLimitAlertInfo } from '../types';
+import { PlatformId, TimeWindow, LifecycleStatus, RateLimitAlertInfo, HumanGatesState } from '../types';
 import { PLATFORM_INFO } from '../data/mockData';
 import { useToast } from './Toast';
 
@@ -37,6 +37,8 @@ interface OperationalToolbarProps {
   onAdvanceLifecycle?: () => void;
   rateLimitAlert?: RateLimitAlertInfo | null;
   subrepresentationAlert?: { region: string; n: number; message: string } | null;
+  humanGates?: HumanGatesState;
+  onNavigateToHumanGates?: () => void;
 }
 
 const TIME_WINDOW_LABELS: Record<TimeWindow, string> = {
@@ -70,6 +72,26 @@ export const OperationalToolbar: React.FC<OperationalToolbarProps> = ({
   const { showToast } = useToast();
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
   const [copiedUrl, setCopiedUrl] = useState(false);
+  const [elapsedSeconds, setElapsedSeconds] = useState(18);
+
+  useEffect(() => {
+    if (lifecycleStatus && lifecycleStatus !== 'PRONTO_PARA_ANALISE_E_BOLETIM') {
+      const timer = setInterval(() => setElapsedSeconds((s) => s + 1), 1000);
+      return () => clearInterval(timer);
+    }
+  }, [lifecycleStatus]);
+
+  const totalEstimatedSeconds = Math.max(20, Math.round((goldSampleSize / 550) * 45));
+  const etaSeconds = Math.max(0, totalEstimatedSeconds - (elapsedSeconds % totalEstimatedSeconds));
+
+  const pendingGate =
+    humanGates?.bronzeGate.status === 'PENDENTE_APROVACAO_HUMANA'
+      ? { name: 'Amostra Bruta (Bronze)', gate: 'bronze' }
+      : humanGates?.silverGate.status === 'PENDENTE_APROVACAO_HUMANA'
+      ? { name: 'Expurgo CIB & Spam (Silver)', gate: 'silver' }
+      : humanGates?.goldGate.status === 'PENDENTE_APROVACAO_HUMANA'
+      ? { name: 'Amostra Limpa & Pesos (Gold)', gate: 'gold' }
+      : null;
 
   const platformsList: PlatformId[] = [
     'youtube',
@@ -143,11 +165,16 @@ export const OperationalToolbar: React.FC<OperationalToolbarProps> = ({
             </button>
 
             {lifecycleStatus && (
-              <div className="hidden xl:flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-mono">
-                <Activity className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400 animate-pulse" />
+              <div className="hidden xl:flex items-center gap-2 px-2.5 py-1.5 rounded-md bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-mono">
+                <Activity className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400 animate-pulse shrink-0" />
                 <span className="text-slate-700 dark:text-slate-300">
                   {lifecycleStatus.replace(/_/g, ' ')} ({lifecycleProgressPercent ?? 100}%)
                 </span>
+                {lifecycleStatus !== 'PRONTO_PARA_ANALISE_E_BOLETIM' && (
+                  <span className="text-[11px] text-slate-500 border-l border-slate-300 dark:border-slate-600 pl-2 tabular-nums">
+                    {elapsedSeconds}s · ETA ~{etaSeconds}s
+                  </span>
+                )}
                 {onAdvanceLifecycle && lifecycleStatus !== 'PRONTO_PARA_ANALISE_E_BOLETIM' && (
                   <button
                     onClick={onAdvanceLifecycle}
@@ -213,6 +240,26 @@ export const OperationalToolbar: React.FC<OperationalToolbarProps> = ({
             <span>
               <strong>Alerta Metodológico de Sub-representação Amostral:</strong> Estrato {subrepresentationAlert.region} com n={subrepresentationAlert.n} (&lt; 15 contas orgânicas). O estimador de Raking IPF aplicará truncamento de pesos de Kish no intervalo [0.25, 4.00].
             </span>
+          </div>
+        )}
+
+        {/* Human Gate Pending Banner (Pilar 2) */}
+        {pendingGate && (
+          <div className="mt-2.5 p-3 rounded-lg bg-blue-50 dark:bg-blue-950/50 border border-blue-400 dark:border-blue-700 flex items-center justify-between text-xs text-blue-950 dark:text-blue-100 shadow-2xs">
+            <div className="flex items-center gap-2">
+              <ShieldCheck className="w-4 h-4 text-blue-700 dark:text-blue-400 shrink-0" />
+              <span>
+                <strong>🔒 Portão de Validação Humana Ativo ({pendingGate.name}):</strong> A próxima camada só será liberada após inspeção e homologação pelo analista humano.
+              </span>
+            </div>
+            {onNavigateToHumanGates && (
+              <button
+                onClick={onNavigateToHumanGates}
+                className="px-3 py-1 bg-blue-700 hover:bg-blue-800 text-white rounded-md font-semibold text-xs transition-colors shrink-0 cursor-pointer"
+              >
+                Inspecionar & Aprovar Camada
+              </button>
+            )}
           </div>
         )}
 
