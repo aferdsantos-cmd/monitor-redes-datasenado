@@ -114,12 +114,13 @@ def lint_ui_code_anti_ai_slop(source_code: str) -> List[str]:
                 )
 
         # 3. Cantos Excessivamente Arredondados
-        for rounded in FORBIDDEN_ROUNDED:
-            if re.search(rounded, line) and "card" in line.lower() or "panel" in line.lower() or "box" in line.lower():
-                violations.append(
-                    f"Linha {idx}: Cantos inflados 'rounded-3xl' em painel analítico. "
-                    f"Utilize raio profissional de dados ('rounded-md' ou 'rounded-lg')."
-                )
+        if not line.strip().startswith("//") and not line.strip().startswith("/*"):
+            for rounded in FORBIDDEN_ROUNDED:
+                if re.search(rounded, line) and ("card" in line.lower() or "panel" in line.lower() or "box" in line.lower()):
+                    violations.append(
+                        f"Linha {idx}: Cantos inflados 'rounded-3xl' em painel analítico. "
+                        f"Utilize raio profissional de dados ('rounded-md' ou 'rounded-lg')."
+                    )
 
         # 4. Emojis em Cabeçalhos e Botões
         if ("<h" in line or "<button" in line or "title=" in line or "header" in line) and EMOJI_PATTERN.search(line):

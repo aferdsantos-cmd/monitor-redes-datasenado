@@ -1,0 +1,6 @@
+{
+  "name": "DataSenado — Bancada de Inteligência do Debate Público Digital",
+  "description": "Bancada analítica de alta densidade e ecossistema 360º de monitoramento e inferência estatística do Instituto de Pesquisa DataSenado.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

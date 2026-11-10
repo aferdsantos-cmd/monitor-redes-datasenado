@@ -23,7 +23,9 @@ config/cookies/
 *.session-journal
 auth_info_baileys/
 
-# Ambientes virtuais Python e caches de sistema
+# Ambientes virtuais Python, Node.js e caches de sistema
+node_modules/
+dist/
 .venv/
 venv/
 env/

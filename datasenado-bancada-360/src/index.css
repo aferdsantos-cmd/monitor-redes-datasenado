@@ -1,0 +1,132 @@
+@import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
+
+@layer base {
+  :root {
+    --font-sans: 'Plus Jakarta Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    --font-serif: 'Source Serif 4', Georgia, Cambria, 'Times New Roman', Times, serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  }
+
+  body {
+    font-family: var(--font-sans);
+    letter-spacing: -0.005em;
+  }
+
+  .font-serif-editorial {
+    font-family: var(--font-serif);
+  }
+
+  code, kbd, samp, pre, .font-mono {
+    font-family: var(--font-mono);
+  }
+}
+
+/* Global editorial justification for paragraphs, list items, and prose blocks */
+main p,
+main li,
+.prose-justified {
+  text-align: justify;
+  hyphens: auto;
+  -webkit-hyphens: auto;
+}
+
+/* Headings and titles: justified without mid-word hyphenation so titles are never broken/clipped */
+main h1,
+main h2,
+main h3,
+main h4 {
+  text-align: justify;
+  hyphens: none;
+  -webkit-hyphens: none;
+}
+
+/* Tabular figures for exact statistical alignment */
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Custom subtle scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.35);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 0.55);
+}
+
+.dark ::-webkit-scrollbar-thumb {
+  background: rgba(51, 65, 85, 0.6);
+}
+
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: rgba(71, 85, 105, 0.8);
+}
+
+/* Media Print Rules (ADR-009 / A4 High Fidelity Dossier) */
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 14mm 16mm 16mm 16mm;
+  }
+
+  body {
+    background: #ffffff;
+    color: #0f172a;
+    font-size: 10.5pt;
+  }
+
+  main h1,
+  main h2,
+  main h3,
+  main h4,
+  article h1,
+  article h2,
+  article h3,
+  article h4 {
+    text-align: justify;
+    hyphens: none;
+  }
+
+  main p,
+  main li,
+  article p,
+  article li,
+  .prose-justified {
+    text-align: justify;
+  }
+
+  .no-print,
+  nav,
+  aside,
+  header,
+  .operational-toolbar,
+  .modal-overlay,
+  .toast-container {
+    display: none;
+  }
+
+  .print-only {
+    display: block;
+  }
+
+  .print-break-inside-avoid {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .print-break-after-page {
+    break-after: page;
+    page-break-after: always;
+  }
+}

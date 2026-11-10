@@ -669,6 +669,7 @@ def test_digital_spectrum_summary_excludes_spam_and_cib_attacks() -> None:
     """
     orch = Phase03SixPlatformsOrchestrator(theme_id="pl_ia_2338")
     now_utc = datetime.now(timezone.utc)
+    base_dt = now_utc - timedelta(days=1)
 
     # Cria post de spam às 06:00 UTC com spectrum_seed_hint
     spam_m = RawCollectedManifestation(
@@ -677,7 +678,7 @@ def test_digital_spectrum_summary_excludes_spam_and_cib_attacks() -> None:
         platform="x_twitter",
         raw_author_id="spam_bot_0600",
         text="Aproveite agora: sorteio pix e cupom de desconto 90% off no curso online! Acesse https://spam-loja.biz sobre PL 2338",
-        created_at=now_utc.replace(hour=6, minute=0, second=0, microsecond=0),
+        created_at=base_dt.replace(hour=6, minute=0, second=0, microsecond=0),
         collection_query_used="PL 2338",
         collector_modality="official_api_chronological",
         shared_urls=["https://spam-loja.biz"],
@@ -691,7 +692,7 @@ def test_digital_spectrum_summary_excludes_spam_and_cib_attacks() -> None:
         platform="x_twitter",
         raw_author_id="senador_cidadao_0900",
         text="Debate fundamental no Senado sobre o PL 2338 e protecao de direitos autorais para artistas #PL2338 https://senado.leg.br/noticia",
-        created_at=now_utc.replace(hour=9, minute=0, second=0, microsecond=0),
+        created_at=base_dt.replace(hour=9, minute=0, second=0, microsecond=0),
         collection_query_used="PL 2338",
         collector_modality="official_api_chronological",
         shared_urls=["https://senado.leg.br/noticia"],

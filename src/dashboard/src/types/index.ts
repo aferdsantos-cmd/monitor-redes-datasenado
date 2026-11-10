@@ -1,0 +1,318 @@
+export type ThemeId = 'eleicao_presidencia_senado' | 'pec_escala_6x1' | 'pl_ia_2338' | string;
+
+export type TimeWindow = '24h' | '7d' | '15d' | '30d' | 'custom';
+
+export type PlatformId =
+  | 'youtube'
+  | 'telegram'
+  | 'x_twitter'
+  | 'instagram_facebook'
+  | 'tiktok'
+  | 'whatsapp';
+
+export type Stance = 'FAVORAVEL' | 'CONTRARIO' | 'NEUTRO' | 'QUARENTENA_CIB';
+
+export interface PlatformConfig {
+  id: PlatformId;
+  label: string;
+  shortLabel: string;
+  icon: string;
+  color: string;
+}
+
+export interface ScenarioResult {
+  scenarioId: 'bruto' | 'cenario_1_hajek' | 'cenario_2_equal' | 'cenario_3_raking' | 'rogan_gladen';
+  name: string;
+  shortName: string;
+  description: string;
+  favoravel: number; // Percentage
+  favoravelCi: [number, number]; // [min, max]
+  contrario: number;
+  contrarioCi: [number, number];
+  neutro: number;
+  neutroCi: [number, number];
+  formula?: string;
+  biasNote?: string;
+}
+
+export interface MedallionMetrics {
+  bronzeTotal: number;
+  queriesUsed: string[];
+  silverSpam: number;
+  silverCibBots: number;
+  silverBotAccounts: number;
+  artificialityRate: number; // e.g. 24.5%
+  uOrgAccounts: number;
+  goldSampleSize: number;
+  kishDeff: number;
+  nEffective: number;
+  marginOfError: number; // e.g. ±3.8 pp
+  psiDrift: number;
+  psiStatus: 'ESTAVEL' | 'ALERTA' | 'CRITICO';
+  youdenJ: number;
+  cohenKappa: number;
+  sensitivity: number; // Se
+  specificity: number; // Sp
+}
+
+export interface PlatformBreakdown {
+  platformId: PlatformId;
+  platformName: string;
+  nOrg: number;
+  sharePercent: number;
+  favoravel: number;
+  contrario: number;
+  neutro: number;
+  cibBlockedCount: number;
+}
+
+export interface RegionRakingDiagnostic {
+  region: string;
+  ufs: string[];
+  targetIbgePercent: number;
+  obtainedPercent: number;
+  gapPp: number;
+  weightsSimplexRange: [number, number];
+  status: 'CALIBRADO_OK' | 'AJUSTE_LEVE' | 'DISCREPANCIA';
+}
+
+export interface AuditRecord {
+  id: string; // HMAC-SHA256 truncated
+  timestampUtc: string;
+  platform: PlatformId;
+  region: string;
+  uf: string;
+  sanitizedText: string;
+  stance: Stance;
+  confidenceScore: number;
+  spectrumId: string;
+  spectrumName: string;
+  decisiveTerms: string[];
+  shapDetails: {
+    baseProbability: number;
+    predictedProbability: number;
+    features: {
+      token: string;
+      weight: number; // positive or negative
+      impactsStance: Stance;
+    }[];
+  };
+}
+
+export interface SpectrumCluster {
+  id: string;
+  name: string;
+  colorHex: string;
+  accountCount: number;
+  shareOrg: number;
+  favoravel: number;
+  contrario: number;
+  neutro: number;
+  seedAccountsCount: number;
+  keyArguments: string[];
+  topDomains: string[];
+  homophilyScore: number;
+}
+
+export interface BubbleGraphNode {
+  id: string;
+  label: string;
+  spectrumId: string;
+  radius: number;
+  x: number;
+  y: number;
+  isSeed?: boolean;
+  isBridge?: boolean;
+  participationCoefficient?: number; // Guimerà-Amaral Pi
+  degree: number;
+}
+
+export interface BubbleGraphEdge {
+  source: string;
+  target: string;
+  weight: number;
+  isCrossSpectrum?: boolean;
+}
+
+export interface FirstMoverEvent {
+  timeStr: string;
+  spectrumId: string;
+  spectrumName: string;
+  postCount: number;
+  narrativeHeadline: string;
+  isSpamPurgedNote?: string;
+}
+
+export interface ConsensusBridge {
+  topic: string;
+  spectrumsInAgreement: string[];
+  description: string;
+  supportLevel: string;
+}
+
+export interface DivergencePoint {
+  topic: string;
+  opposingFields: string[];
+  description: string;
+  tensionLevel: string;
+}
+
+export interface TopTermItem {
+  term: string;
+  mentions: number;
+  sharePercent: number;
+  predominantStance: 'FAVORAVEL' | 'CONTRARIO' | 'NEUTRO';
+}
+
+export interface PressHighlight {
+  outlet: string;
+  headline: string;
+  dateStr: string;
+  framing: string;
+  repercussionSummary: string;
+}
+
+export interface InfluentialProfileCluster {
+  name: string;
+  platform: string;
+  category: string;
+  stance: 'FAVORAVEL' | 'CONTRARIO' | 'NEUTRO';
+  engagementShare: string;
+  coreMessage: string;
+}
+
+export interface WatchpointItem {
+  title: string;
+  riskOrOpportunity: 'ALERTA' | 'TENDENCIA' | 'AGENDA_LEGISLATIVA';
+  horizon: string;
+  description: string;
+}
+
+export interface BoilingTopic {
+  id: string;
+  title: string;
+  committee: string;
+  isSenateInterest: boolean;
+  relevanceScore: number; // 0-100
+  burstinessGohBarabasi: number; // B coefficient
+  growth24h: number; // +240%
+  volume24h: number;
+  cusumTriggered: boolean;
+  suggestedAction: string;
+  themeIdTarget?: string;
+}
+
+export interface ThematicAxis {
+  id: string;
+  name: string;
+  sharePostsPercent: number;
+  shareInteractionsPercent: number;
+  dominantField: string;
+  summary: string;
+}
+
+export interface FieldNarrativeDispute {
+  fieldId: string;
+  fieldName: string;
+  colorHex: string;
+  shareWithinTheme: number;
+  centralFrame: string;
+  detailedNarrative: string;
+  keyHashtagsOrTerms: string[];
+}
+
+export interface ThemeNarrativeInsights {
+  executiveLead: string;
+  scenariosFinding: string;
+  platformsFinding: string;
+  regionalFinding: string;
+  bubblesFinding: string;
+  firstMoverFinding: string;
+  legislativeConclusion: string;
+  thematicAxes: ThematicAxis[];
+  fieldDisputes: FieldNarrativeDispute[];
+}
+
+export interface ThemeDataset {
+  id: ThemeId;
+  title: string;
+  subtitle: string;
+  committee: string;
+  legislativeContext: string;
+  statusTag: string;
+  narrativeInsights: ThemeNarrativeInsights;
+  medallion: MedallionMetrics;
+  scenarios: ScenarioResult[];
+  platforms: PlatformBreakdown[];
+  homogeneityTest: {
+    chi2Adjusted: number;
+    pValue: number;
+    fdrCorrected: boolean;
+    cramerV: number;
+    interpretation: string;
+  };
+  rakingDiagnostics: RegionRakingDiagnostic[];
+  auditRecords: AuditRecord[];
+  topological: {
+    modularityObserved: number;
+    modularityNull: number;
+    zScore: number;
+    pValue: number;
+    homophilyKrackhardtEI: number;
+    homophilyCategory: 'CÂMARA DE ECO FECHADA' | 'MODERADA' | 'DEBATE TRANSVERSAL';
+    crossBubbleBridgeRate: number; // % Pi > 0.30
+  };
+  spectrums: SpectrumCluster[];
+  bubbleNodes: BubbleGraphNode[];
+  bubbleEdges: BubbleGraphEdge[];
+  grangerCausality: {
+    fStatistic: number;
+    pValue: number;
+    optimalLagHours: number;
+    firstMoverSpectrumName: string;
+    timeline: FirstMoverEvent[];
+  };
+  consensusBridges: ConsensusBridge[];
+  divergencePoints: DivergencePoint[];
+  topTerms: TopTermItem[];
+  pressHighlights: PressHighlight[];
+  influentialProfiles: InfluentialProfileCluster[];
+  watchpoints: WatchpointItem[];
+  lifecycleStatus?: LifecycleStatus;
+  lifecycleProgressPercent?: number;
+  connectorSessions?: ConnectorSessionInfo[];
+  rateLimitAlert?: RateLimitAlertInfo;
+  subrepresentationAlert?: { region: string; n: number; message: string };
+}
+
+export type LifecycleStatus =
+  | 'CADASTRADO_AGUARDANDO_DISPARO'
+  | 'VALIDANDO_SESSOES_CONECTORES'
+  | 'COLETA_EM_ANDAMENTO_6_REDES'
+  | 'DESCONTAMINACAO_SILVER_CIB_SPAM'
+  | 'CALIBRACAO_RAKING_IPF_ROGAN_GLADEN'
+  | 'PRONTO_PARA_ANALISE_E_BOLETIM'
+  | 'ALERTA_OPERACIONAL_BACKOFF_OU_CREDENCIAIS';
+
+export interface ConnectorSessionInfo {
+  platformId: PlatformId;
+  platformName: string;
+  status: 'CONECTADO_HTTP_200' | 'COOKIE_EXPIRANDO_AVISO' | 'REQUER_RENOVACAO_HTTP_401_403' | 'PAUSA_PREVENTIVA_RATE_LIMIT_HTTP_429';
+  authType: 'PUBLIC_REVERSE_API' | 'SESSION_COOKIE' | 'MTPROTO_DAEMON' | 'QR_CODE_PAIRING';
+  lastPingUtc: string;
+  maskedCredentialHint: string;
+  jitterRangeSeconds: [number, number];
+  rateLimitBackoffSeconds?: number;
+  remainingQuotaEstimate?: number;
+}
+
+export interface RateLimitAlertInfo {
+  platformId: PlatformId;
+  platformName: string;
+  backoffSecondsRemaining: number;
+  suggestedAction: string;
+  isKishSubrepresented?: boolean;
+  affectedMacroregion?: string;
+  currentSampleSize?: number;
+}
+
