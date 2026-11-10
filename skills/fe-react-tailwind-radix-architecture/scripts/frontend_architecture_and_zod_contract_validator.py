@@ -20,8 +20,27 @@ from typing import Any, Dict, List, Optional, Tuple
 import urllib.parse
 
 
-VALID_THEMES = {"reforma_tributaria", "regulamentacao_ia", "seguranca_publica"}
-VALID_PLATFORMS = {"youtube", "telegram", "x", "meta", "tiktok", "whatsapp"}
+VALID_THEMES = {
+    "reforma_tributaria",
+    "regulamentacao_ia",
+    "seguranca_publica",
+    "pl_ia_2338",
+    "pec_escala_6x1",
+    "eleicao_presidencia_senado",
+    "isencao_ir_5mil_reforma_renda",
+    "pec_seguranca_publica_guardas",
+    "regulamentacao_apostas_bets_saude",
+}
+VALID_PLATFORMS = {
+    "youtube",
+    "telegram",
+    "x",
+    "x_twitter",
+    "meta",
+    "instagram_facebook",
+    "tiktok",
+    "whatsapp",
+}
 VALID_SCENARIOS = {"C1_HAJEK", "C2_INV_WEIGHT", "C3_RAKING"}
 
 FORBIDDEN_LEXICAL_TERMS = re.compile(r"\b(corrupto|genocida|salvador|mito|ladrao)\b", re.IGNORECASE)
@@ -163,7 +182,27 @@ def lint_frontend_architecture_code(source_code: str) -> List[str]:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Validador de Arquitetura Front-End e Contratos Zod")
     parser.add_argument("--demo", action="store_true", help="Executa testes de sincronização Nuqs, Zod e linter estático")
+    parser.add_argument("--target-dir", type=Path, help="Diretório contendo código front-end (TypeScript/React)")
     args = parser.parse_args()
+
+    if args.target_dir:
+        target = args.target_dir.resolve()
+        if not target.exists():
+            print(f"[ERRO] Diretório não encontrado: {target}", file=sys.stderr)
+            return 1
+        all_violations = []
+        fe_files = list(target.rglob("*.tsx")) + list(target.rglob("*.ts"))
+        for f in fe_files:
+            v_list = lint_frontend_architecture_code(f.read_text(encoding="utf-8"))
+            if v_list:
+                all_violations.extend([f"{f.name}: {v}" for v in v_list])
+        if all_violations:
+            print(f"Violações de arquitetura front-end encontradas ({len(all_violations)}):")
+            for v in all_violations:
+                print(f"  ❌ {v}")
+            return 1
+        print(f"✅ Diretório {target.name} ({len(fe_files)} arquivos) 100% aderente às diretrizes de arquitetura React/Tailwind/Radix.")
+        return 0
 
     print("=== [1/3] Sincronização de URL Query State (Padrão Nuqs) ===")
     demo_filters = {

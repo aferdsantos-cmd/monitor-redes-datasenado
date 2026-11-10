@@ -142,7 +142,23 @@ def validate_media_print_stylesheet(css_text: str) -> Tuple[bool, List[str]]:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Validador de Visualização Data-Dense e Impressão")
     parser.add_argument("--demo", action="store_true", help="Executa testes determinísticos de ECharts, 27 UFs, LGPD e @media print")
+    parser.add_argument("--print-css", type=Path, help="Caminho para folha de estilos CSS contendo regras @media print")
     args = parser.parse_args()
+
+    if args.print_css:
+        css_path = args.print_css.resolve()
+        if not css_path.exists():
+            print(f"[ERRO] Arquivo CSS não encontrado: {css_path}", file=sys.stderr)
+            return 1
+        css_ok, css_errs = validate_media_print_stylesheet(css_path.read_text(encoding="utf-8"))
+        if not css_ok:
+            print(f"[ERRO] Folha de estilos @media print reprovada ({len(css_errs)} falhas):")
+            for e in css_errs:
+                print(f"  ❌ {e}")
+            return 1
+        print(f"✅ Folha de estilo {css_path.name} aprovada para impressão A4.")
+        # Se print_css passou e não pediu apenas demo, finaliza com sucesso
+        return 0
 
     print("=== [1/4] Validação de Opções Apache ECharts (DataSenado & Okabe-Ito) ===")
     valid_option = {

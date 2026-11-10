@@ -178,7 +178,27 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Auditor de Design Tokens e Linter Anti-AI-Slop")
     parser.add_argument("--demo", action="store_true", help="Executa demonstração com teste de contraste WCAG 2.2 e linter")
     parser.add_argument("--check-ui", type=Path, help="Caminho para arquivo JSX/TSX/HTML a ser auditado")
+    parser.add_argument("--target-dir", type=Path, help="Diretório contendo arquivos JSX/TSX a serem auditados")
     args = parser.parse_args()
+
+    if args.target_dir:
+        target = args.target_dir.resolve()
+        if not target.exists():
+            print(f"[ERRO] Diretório não encontrado: {target}", file=sys.stderr)
+            return 1
+        all_violations = []
+        ui_files = list(target.rglob("*.tsx")) + list(target.rglob("*.jsx"))
+        for f in ui_files:
+            v_list = lint_ui_code_anti_ai_slop(f.read_text(encoding="utf-8"))
+            if v_list:
+                all_violations.extend([f"{f.name}: {v}" for v in v_list])
+        if all_violations:
+            print(f"Violações de AI-Slop encontradas ({len(all_violations)}):")
+            for v in all_violations:
+                print(f"  ❌ {v}")
+            return 1
+        print(f"✅ Diretório {target.name} ({len(ui_files)} arquivos) 100% aderente ao Design System DataSenado.")
+        return 0
 
     if args.check_ui:
         path = args.check_ui.resolve()

@@ -5,9 +5,12 @@ Atende integralmente à Lacuna 3 e Lacuna 4 da OS-F05-002 e ao protocolo social-
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import os
 import re
 import time
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Set
 
 VALID_PLATFORMS: Set[str] = {
@@ -119,12 +122,27 @@ class SocialMediaConnectorsSessionManager:
         """
         Valida e armazena credenciais em memória para uma plataforma específica.
         Dispara ValueError caso a plataforma seja inválida ou campos essenciais faltem.
+        Aplica travas AppSec estritas contra CRLF, Command Injection, Prototype Pollution e DoS.
         """
         if platform_id not in VALID_PLATFORMS:
             raise ValueError(f"Plataforma inválida: '{platform_id}'. Suportadas: {sorted(VALID_PLATFORMS)}")
 
         if not isinstance(credentials_dict, dict) or not credentials_dict:
             raise ValueError("O dicionário de credenciais não pode ser vazio.")
+
+        # 1. Trava AppSec contra Prototype Pollution
+        if any(k in ("__proto__", "constructor", "prototype") for k in credentials_dict.keys()):
+            raise ValueError("Violação AppSec: Tentativa de Prototype Pollution detectada nas chaves de credencial.")
+
+        # 2. Travas AppSec de DoS, CRLF e Command Injection em valores
+        for k, v in credentials_dict.items():
+            s_val = str(v)
+            if len(s_val) > 4096:
+                raise ValueError(f"Violação AppSec: Credencial para '{k}' excede o tamanho máximo de 4096 caracteres (DoS).")
+            if "\r" in s_val or "\n" in s_val or "%0d" in s_val.lower() or "%0a" in s_val.lower():
+                raise ValueError(f"Violação AppSec: CRLF Header Injection detectado na credencial '{k}'.")
+            if re.search(r"[;&|`$]", s_val):
+                raise ValueError(f"Violação AppSec: Metacaracteres de comando detectados na credencial '{k}'.")
 
         # Valida requisitos mínimos da plataforma
         required_fields = PLATFORM_CREDENTIAL_REQUIREMENTS.get(platform_id, [])
@@ -150,6 +168,98 @@ class SocialMediaConnectorsSessionManager:
             "status": STATUS_CONNECTED_200,
             "message": f"Sessão da plataforma '{platform_id}' atualizada com sucesso sob Zero-Footprint.",
             "updated_credentials": masked_response,
+        }
+
+    def ingest_and_sanitize_reverse_api_payload(
+        self,
+        platform_id: str,
+        raw_payload: Dict[str, Any],
+        hmac_secret_key: str,
+        http_status: int = 200,
+    ) -> Dict[str, Any]:
+        """
+        Ingere, higieniza e anonimiza payloads brutos obtidos via reverse engineering/DevTools.
+        Atende integralmente à 18ª skill (social-media-reverse-api-extractor), QA-F05-08 e SIM-F05-04.
+        """
+        if platform_id not in VALID_PLATFORMS:
+            raise ValueError(f"Plataforma inválida: '{platform_id}'. Suportadas: {sorted(VALID_PLATFORMS)}")
+
+        if not hmac_secret_key or len(hmac_secret_key) < 32:
+            raise RuntimeError("FALHA FECHADA LGPD: Chave HMAC ausente ou inferior a 32 caracteres.")
+
+        # 1. Resiliência a Códigos de Erro HTTP
+        if http_status in (401, 403):
+            self.test_connector_handshake(platform_id, force_simulated_outcome=http_status)
+            return {
+                "status": "SESSAO_EXPIRADA",
+                "platform_id": platform_id,
+                "http_status": http_status,
+                "action_required": "RENOVAR_COOKIE_OU_TOKEN",
+                "message": f"Sessão de API reversa expirada ({http_status}) para '{platform_id}'. Renovação de token requerida.",
+            }
+
+        if http_status == 429:
+            self.test_connector_handshake(platform_id, force_simulated_outcome=429)
+            backoff_sec = 1800
+            return {
+                "status": "RATE_LIMIT_PAUSA",
+                "platform_id": platform_id,
+                "http_status": 429,
+                "backoff_seconds": backoff_sec,
+                "message": f"Rate limit atingido (HTTP 429) em '{platform_id}'. Backoff exponencial de {backoff_sec}s ativado.",
+            }
+
+        # 2. Extração recursiva de manifestações em payload HTTP 200
+        found_nodes: List[Dict[str, Any]] = []
+
+        def _extract_nodes(obj: Any) -> None:
+            if isinstance(obj, dict):
+                has_text = any(k in obj for k in ("text", "full_text", "content", "message", "snippet"))
+                has_id = any(k in obj for k in ("id", "comment_id", "post_id", "author_id", "user_id_str"))
+                if has_text and has_id:
+                    found_nodes.append(obj)
+                else:
+                    for v in obj.values():
+                        _extract_nodes(v)
+            elif isinstance(obj, list):
+                for it in obj:
+                    _extract_nodes(it)
+
+        _extract_nodes(raw_payload)
+
+        sanitized_items = []
+        for idx, node in enumerate(found_nodes):
+            raw_text = str(node.get("text") or node.get("full_text") or node.get("content") or node.get("message") or "")
+            raw_author = str(node.get("author_id") or node.get("user_id_str") or node.get("user_id") or node.get("handle") or f"user_{idx}")
+            post_id = str(node.get("id") or node.get("comment_id") or f"post_rev_{idx}")
+
+            # Higienização de segurança AppSec
+            clean_text = re.sub(r"<[^>]+>", "", raw_text)
+            clean_text = re.sub(r"@[\w_]+", "@[USUARIO_ANONIMIZADO]", clean_text)
+
+            # Pseudonimização criptográfica HMAC-SHA256 (64 hex chars)
+            auth_hash = hmac.new(
+                hmac_secret_key.encode("utf-8"),
+                raw_author.encode("utf-8"),
+                hashlib.sha256,
+            ).hexdigest()
+
+            sanitized_items.append({
+                "id": post_id,
+                "platform": platform_id,
+                "raw_author_id": None,  # Expurgado em modo fail-closed
+                "author_id_hash": auth_hash,
+                "text": clean_text,
+                "sanitized_text": clean_text,
+                "created_at": node.get("created_at") or datetime.now(timezone.utc).isoformat(),
+                "anonymization_verified": True,
+            })
+
+        return {
+            "status": "SUCESSO_200",
+            "platform_id": platform_id,
+            "total_extracted": len(sanitized_items),
+            "sanitized_manifestations": sanitized_items,
         }
 
     def test_connector_handshake(

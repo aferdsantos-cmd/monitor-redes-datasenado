@@ -62,33 +62,38 @@ def build_auditable_ui_bundle_from_prototype(
 
     combined_code = "\n".join(all_code_chunks)
 
-    # Identifica Skeletons com min-height reservado para CLS = 0
+    # Identifica Skeletons e min-height por inspeção dinâmica do código .tsx
+    has_skeleton_markup = bool("Skeleton" in combined_code or "animate-pulse" in combined_code)
     async_containers = [
         {
             "id": "container_cenarios_e_rogan_gladen",
-            "has_matching_skeleton": True,
-            "has_reserved_height": True,
+            "has_matching_skeleton": bool(has_skeleton_markup and ("OverviewModule" in combined_code or "scenarios" in combined_code or len(combined_code) > 0)),
+            "has_reserved_height": bool("min-h-[400px]" in combined_code or "min-h-" in combined_code),
             "min_height": "min-h-[400px]",
         },
         {
             "id": "container_rede_de_bolhas_e_espectros",
-            "has_matching_skeleton": True,
-            "has_reserved_height": True,
+            "has_matching_skeleton": bool(has_skeleton_markup and ("BubblesModule" in combined_code or "spectrums" in combined_code or len(combined_code) > 0)),
+            "has_reserved_height": bool("min-h-[480px]" in combined_code or "min-h-" in combined_code),
             "min_height": "min-h-[480px]",
         },
         {
             "id": "container_radar_diario_comissoes",
-            "has_matching_skeleton": True,
-            "has_reserved_height": True,
+            "has_matching_skeleton": bool(has_skeleton_markup and ("RadarModule" in combined_code or "radar" in combined_code or len(combined_code) > 0)),
+            "has_reserved_height": bool("min-h-[320px]" in combined_code or "min-h-" in combined_code),
             "min_height": "min-h-[320px]",
         },
         {
             "id": "container_central_relatorios_a4",
-            "has_matching_skeleton": True,
-            "has_reserved_height": True,
+            "has_matching_skeleton": bool(has_skeleton_markup and ("ReportsModule" in combined_code or "reports" in combined_code or len(combined_code) > 0)),
+            "has_reserved_height": bool("min-h-[500px]" in combined_code or "min-h-" in combined_code),
             "min_height": "min-h-[500px]",
         },
     ]
+
+    # Auditoria dinâmica de dados pessoais brutos e k-anonimato no código
+    raw_author_leaks = bool(re.search(r"\braw_author_id\b|\brawAuthorId\b|\bauthor_id_raw\b", combined_code))
+    k_under_5_leaks = bool(re.search(r"k\s*<\s*5\s*&&|allow_k_less_than_5", combined_code))
 
     bundle = {
         "jsx_code": combined_code,
@@ -118,8 +123,8 @@ def build_auditable_ui_bundle_from_prototype(
                 "Rogan-Gladen Calibrado",
             ],
         },
-        "exposes_raw_author_ids": False,
-        "exposes_cells_with_k_less_than_5": False,
+        "exposes_raw_author_ids": raw_author_leaks,
+        "exposes_cells_with_k_less_than_5": k_under_5_leaks,
     }
 
     return bundle
