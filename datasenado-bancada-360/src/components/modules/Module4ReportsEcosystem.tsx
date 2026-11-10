@@ -320,23 +320,6 @@ export const Module4ReportsEcosystem: React.FC<Module4ReportsEcosystemProps> = (
     );
   };
 
-    const blob = new Blob([htmlDocContent], { type: 'application/msword;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `Relatorio_DataSenado_${dataset.id}.doc`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-
-    showToast(
-      'success',
-      'Relatório Descritivo Word Baixado',
-      'O documento completo com títulos e parágrafos justificados, convergências, divergências, imprensa e pontos de atenção foi exportado.'
-    );
-  };
-
   const handleExportAuditPackage = () => {
     const auditManifest = {
       manifestVersion: '3.4.0',

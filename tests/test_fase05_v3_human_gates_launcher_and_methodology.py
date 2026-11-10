@@ -342,6 +342,136 @@ class TestPilar6MethodologyAndScienceModule:
         assert "Precedência de Granger não é causa física direta" in content
 
 
+class TestAchadosCriticosFase05V2Saneados:
+    """Testes específicos para os 8 Achados Críticos saneados da Seção 2 do PVQ v2."""
+
+    def test_achado1_dual_contract_human_gates(self) -> None:
+        """Achado 1: Contrato expõe chaves camelCase e snake_case simultaneamente."""
+        bridge = DataSenadoWorkbenchBackendBridge()
+        dataset = bridge.build_complete_frontend_theme_dataset("eleicao_presidencia_senado")
+        gates = dataset["humanGates"]
+        # Verifica camelCase
+        assert "bronzeGate" in gates
+        assert "silverGate" in gates
+        assert "goldGate" in gates
+        assert "randomSeed" in gates["goldGate"]
+        assert "targetSampleSize" in gates["goldGate"]
+        # Verifica snake_case
+        assert "bronze_gate" in gates
+        assert "silver_gate" in gates
+        assert "gold_gate" in gates
+        assert "random_seed" in gates["gold_gate"]
+
+    def test_achado2_and_4_resample_gold_empirical_difference(self) -> None:
+        """Achado 2 & 4: Mudar random_seed altera empiricamente unidades amostrais e pesos."""
+        bridge = DataSenadoWorkbenchBackendBridge()
+        bridge.manipulate_medallion_layer("pec_escala_6x1", "resample_gold", {"random_seed": 42, "target_sample_size": 400})
+        ds1 = bridge.build_complete_frontend_theme_dataset("pec_escala_6x1")
+        units1 = [u["id"] for u in ds1["goldSampleUnits"]]
+        weights1 = [u["rakingWeight"] for u in ds1["goldSampleUnits"]]
+
+        bridge.manipulate_medallion_layer("pec_escala_6x1", "resample_gold", {"random_seed": 777, "target_sample_size": 400})
+        ds2 = bridge.build_complete_frontend_theme_dataset("pec_escala_6x1")
+        units2 = [u["id"] for u in ds2["goldSampleUnits"]]
+        weights2 = [u["rakingWeight"] for u in ds2["goldSampleUnits"]]
+
+        assert units1 != units2, "Unidades amostrais devem ser diferentes para seeds distintas"
+        assert weights1 != weights2, "Pesos amostrais devem ser diferentes para seeds distintas"
+
+    def test_achado3_strict_lifecycle_lock_in_backend(self) -> None:
+        """Achado 3: Backend recusa avançar ciclo de vida se portão não estiver aprovado."""
+        sm = MonitoringLifecycleStateMachine(theme_id="tema_teste_trava_ciclo")
+        with pytest.raises(ValueError, match="Trava de Portão Humano"):
+            sm.set_state("tema_teste_trava_ciclo", "DESCONTAMINACAO_SILVER_CIB_SPAM", enforce_human_gates=True)
+
+    def test_achado5_fail_closed_import_no_secret_injected_in_module_scope(self) -> None:
+        """Achado 5: Importar local_workbench_server não pode poluir escopo com chave HMAC global."""
+        # Salva estado atual
+        old_val = os.environ.get("LGPD_HMAC_SECRET_KEY")
+        if "LGPD_HMAC_SECRET_KEY" in os.environ:
+            del os.environ["LGPD_HMAC_SECRET_KEY"]
+        try:
+            # Reimporta módulo em novo namespace
+            import importlib
+            import src.ui.local_workbench_server as srv_mod
+            importlib.reload(srv_mod)
+            assert "LGPD_HMAC_SECRET_KEY" not in os.environ, "Chave HMAC não deve ser gerada no import!"
+        finally:
+            if old_val:
+                os.environ["LGPD_HMAC_SECRET_KEY"] = old_val
+
+    def test_achado6_appsec_dos_and_prototype_pollution(self) -> None:
+        """Achado 6: Servidor rejeita payloads > 64KB e protege contra prototype pollution."""
+        with LocalWorkbenchServer(port=8774) as server:
+            time.sleep(0.3)
+            # Payload excessivo (> 65536 bytes)
+            big_body = json.dumps({"text": "A" * 70000}).encode("utf-8")
+            req_big = urllib.request.Request(
+                "http://127.0.0.1:8774/api/sandbox/step-by-step",
+                data=big_body,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with pytest.raises(urllib.error.HTTPError) as exc_info:
+                urllib.request.urlopen(req_big)
+            assert exc_info.value.code in (413, 400)
+
+            # Prototype pollution
+            proto_body = json.dumps({"__proto__": {"polluted": True}, "text": "teste"}).encode("utf-8")
+            req_proto = urllib.request.Request(
+                "http://127.0.0.1:8774/api/sandbox/step-by-step",
+                data=proto_body,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with pytest.raises(urllib.error.HTTPError) as exc_proto:
+                urllib.request.urlopen(req_proto)
+            assert exc_proto.value.code == 400
+
+    def test_achado7_docx_includes_human_gates_and_boundaries(self) -> None:
+        """Achado 7: Relatório Word OOXML inclui Portões Humanos e Fronteiras de Inferência."""
+        bridge = DataSenadoWorkbenchBackendBridge()
+        docx_buf = bridge.generate_executive_docx_report("eleicao_presidencia_senado")
+        docx_bytes = docx_buf.getvalue()
+        assert len(docx_bytes) > 1000
+        # Inspeção do ZIP/XML
+        import io
+        import zipfile
+        with zipfile.ZipFile(io.BytesIO(docx_bytes)) as zf:
+            xml_text = zf.read("word/document.xml").decode("utf-8")
+            assert "Portões de Homologação Humana" in xml_text or "Portões" in xml_text
+            assert "Fronteiras de Inferência" in xml_text or "O QUE ESTE MONITORAMENTO AFIRMA" in xml_text
+
+    def test_achado8_custom_theme_registration_and_end_to_end_endpoints(self) -> None:
+        """Achado 8: Novo tema personalizado é registrado e opera em todas as rotas."""
+        with LocalWorkbenchServer(port=8775) as server:
+            time.sleep(0.3)
+            reg_body = json.dumps({
+                "id": "pl_4173_ciberseguranca",
+                "title": "PL 4.173 Cibersegurança e Infraestruturas Críticas",
+                "committee": "CCT",
+                "queries": ["cibersegurança", "infraestrutura crítica", "PL 4173"],
+            }).encode("utf-8")
+
+            req_reg = urllib.request.Request(
+                "http://127.0.0.1:8775/api/themes/register",
+                data=reg_body,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req_reg) as res:
+                assert res.status == 201
+                data = json.loads(res.read().decode("utf-8"))
+                assert data["id"] == "pl_4173_ciberseguranca"
+                assert data["humanGates"]["bronzeGate"]["status"] == "PENDENTE_APROVACAO_HUMANA"
+
+            # Consulta o tema recém-criado
+            req_get = urllib.request.urlopen("http://127.0.0.1:8775/api/themes/pl_4173_ciberseguranca")
+            assert req_get.status == 200
+            theme_data = json.loads(req_get.read().decode("utf-8"))
+            assert theme_data["title"] == "PL 4.173 Cibersegurança e Infraestruturas Críticas"
+
+
 class TestParityAndGovernance:
     """Testes de Paridade SHA-256 e Preservação da Baseline."""
 

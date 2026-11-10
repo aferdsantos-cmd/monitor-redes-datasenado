@@ -240,12 +240,20 @@ class WorkbenchAPIRequestHandler(BaseHTTPRequestHandler):
                 target_state = body.get("target_state")
                 simulate_contingency = bool(body.get("simulate_contingency", False))
                 enforce_gates = bool(body.get("enforce_human_gates", True))
-                res = bridge.lifecycle_manager.advance_or_run_monitoring_lifecycle(
-                    theme_id=theme_id,
-                    target_state=target_state,
-                    simulate_contingency=simulate_contingency,
-                    enforce_human_gates=enforce_gates,
-                )
+                if target_state:
+                    res = bridge.lifecycle_manager.set_state(
+                        theme_id,
+                        target_state,
+                        f"Avançando para {target_state}",
+                        enforce_human_gates=enforce_gates,
+                    )
+                else:
+                    res = bridge.lifecycle_manager.advance_or_run_monitoring_lifecycle(
+                        theme_id=theme_id,
+                        target_state=target_state,
+                        simulate_contingency=simulate_contingency,
+                        enforce_human_gates=enforce_gates,
+                    )
                 self._send_json(res)
                 return
 

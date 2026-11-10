@@ -462,15 +462,16 @@ class MonitoringLifecycleStateMachine:
             raise ValueError(f"Ação de manipulação Medallion inválida: '{action}'")
 
         dual_gates = serialize_human_gates_dual_contract(gates)
-        state["human_gates"] = dual_gates
-        state["humanGates"] = dual_gates
-        self._theme_states[theme_id] = state
+        cur_state = self.get_state(theme_id)
+        cur_state["human_gates"] = dual_gates
+        cur_state["humanGates"] = dual_gates
+        self._theme_states[theme_id] = cur_state
         return {
             "theme_id": theme_id,
             "action": action,
             "human_gates": dual_gates,
             "humanGates": dual_gates,
-            "lifecycle_status": self.get_state(theme_id)["status"],
+            "lifecycle_status": cur_state["status"],
             "status": "SUCCESS",
         }
 
@@ -1467,6 +1468,7 @@ class DataSenadoWorkbenchBackendBridge:
         """Registra dinamicamente novo tema aplicando a trava de neutralidade M-04 e armazena em memória."""
         res = validate_new_theme_registration(theme_spec)
         theme_id = res["theme_id"]
+        res["id"] = theme_id
         custom_dict = {
             "id": theme_id,
             "theme_id": theme_id,
@@ -1480,7 +1482,9 @@ class DataSenadoWorkbenchBackendBridge:
             "selected_platforms": theme_spec.get("selected_platforms") or ["youtube", "telegram", "x_twitter", "instagram_facebook", "tiktok", "whatsapp"],
         }
         self._custom_themes_store[theme_id] = custom_dict
-        self.lifecycle_manager.get_state(theme_id)
+        state = self.lifecycle_manager.get_state(theme_id)
+        res["human_gates"] = state["human_gates"]
+        res["humanGates"] = state["human_gates"]
         return res
 
     def get_methodology_treatise_payload(self) -> Dict[str, Any]:
@@ -1598,6 +1602,16 @@ class DataSenadoWorkbenchBackendBridge:
                 {"author": "Granger, Clive W. J.", "year": 1969, "title": "Investigating Causal Relations by Econometric Models and Cross-spectral Methods", "doi": "10.2307/1912791"},
                 {"author": "Meng, Xiao-Li", "year": 2018, "title": "Statistical Paradises and Paradoxes in Big Data", "doi": "10.1214/18-AOAS1185BR"},
             ],
+            "scientific_bibliography": [
+                {"author": "Kish, Leslie", "year": 1965, "title": "Survey Sampling", "doi": "10.1002/bimj.19680100122"},
+                {"author": "Deming, W. Edwards & Stephan, Frederick F.", "year": 1940, "title": "On a Least Squares Adjustment of a Sampled Frequency Table", "doi": "10.1214/aoms/1177731829"},
+                {"author": "Rogan, Walter J. & Gladen, Beth", "year": 1978, "title": "Estimating prevalence from the results of a screening test", "doi": "10.1093/oxfordjournals.aje.a112510"},
+                {"author": "Youden, William J.", "year": 1950, "title": "Index for rating diagnostic tests", "doi": "10.1002/1097-0142(1950)3:1<32::aid-cncr2820030106>3.0.co;2-3"},
+                {"author": "Cohen, Jacob", "year": 1960, "title": "A Coefficient of Agreement for Nominal Scales", "doi": "10.1177/001316446002000104"},
+                {"author": "Newman, Mark E. J.", "year": 2006, "title": "Modularity and community structure in networks", "doi": "10.1073/pnas.0601602103"},
+                {"author": "Granger, Clive W. J.", "year": 1969, "title": "Investigating Causal Relations by Econometric Models and Cross-spectral Methods", "doi": "10.2307/1912791"},
+                {"author": "Meng, Xiao-Li", "year": 2018, "title": "Statistical Paradises and Paradoxes in Big Data", "doi": "10.1214/18-AOAS1185BR"},
+            ],
             "methodological_boundaries": {
                 "can_state": [
                     "Distribuição das manifestações de contas orgânicas ativas observadas nas 6 plataformas monitoradas.",
@@ -1605,6 +1619,38 @@ class DataSenadoWorkbenchBackendBridge:
                     "Estimativas estatisticamente corrigidas para o universo do discurso público digital capturado.",
                 ],
                 "cannot_state": [
+                    "JAMAIS extrapolar como pesquisa representativa de toda a população brasileira ou eleitorado nacional.",
+                    "JAMAIS substituir pesquisas probabilísticas de opinião pública conduzidas pelo DataSenado.",
+                    "JAMAIS interpretar precedência de Granger como causalidade substantiva ou física direta.",
+                ],
+                "what_can_affirm": [
+                    "Distribuição das manifestações de contas orgânicas ativas observadas nas 6 plataformas monitoradas.",
+                    "Tendências de engajamento e polarização entre os estratos analisados.",
+                    "Estimativas estatisticamente corrigidas para o universo do discurso público digital capturado.",
+                ],
+                "what_never_affirm": [
+                    "JAMAIS extrapolar como pesquisa representativa de toda a população brasileira ou eleitorado nacional.",
+                    "JAMAIS substituir pesquisas probabilísticas de opinião pública conduzidas pelo DataSenado.",
+                    "JAMAIS interpretar precedência de Granger como causalidade substantiva ou física direta.",
+                ],
+            },
+            "institutional_boundaries": {
+                "can_state": [
+                    "Distribuição das manifestações de contas orgânicas ativas observadas nas 6 plataformas monitoradas.",
+                    "Tendências de engajamento e polarização entre os estratos analisados.",
+                    "Estimativas estatisticamente corrigidas para o universo do discurso público digital capturado.",
+                ],
+                "cannot_state": [
+                    "JAMAIS extrapolar como pesquisa representativa de toda a população brasileira ou eleitorado nacional.",
+                    "JAMAIS substituir pesquisas probabilísticas de opinião pública conduzidas pelo DataSenado.",
+                    "JAMAIS interpretar precedência de Granger como causalidade substantiva ou física direta.",
+                ],
+                "what_can_affirm": [
+                    "Distribuição das manifestações de contas orgânicas ativas observadas nas 6 plataformas monitoradas.",
+                    "Tendências de engajamento e polarização entre os estratos analisados.",
+                    "Estimativas estatisticamente corrigidas para o universo do discurso público digital capturado.",
+                ],
+                "what_never_affirm": [
                     "JAMAIS extrapolar como pesquisa representativa de toda a população brasileira ou eleitorado nacional.",
                     "JAMAIS substituir pesquisas probabilísticas de opinião pública conduzidas pelo DataSenado.",
                     "JAMAIS interpretar precedência de Granger como causalidade substantiva ou física direta.",
