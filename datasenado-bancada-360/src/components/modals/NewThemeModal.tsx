@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { X, PlusCircle, CheckCircle2, AlertTriangle } from 'lucide-react';
-import { ThemeDataset } from '../../types';
+import { ThemeDataset, normalizeHumanGates } from '../../types';
 import { useToast } from '../Toast';
 
 interface NewThemeModalProps {
@@ -42,6 +42,7 @@ export const NewThemeModal: React.FC<NewThemeModalProps> = ({
 
     const themeId = `tema_${Date.now()}`;
     const queries = rawQueries.split(',').map((q) => q.trim()).filter(Boolean);
+    const initialGates = normalizeHumanGates();
 
     const newTheme: ThemeDataset = {
       id: themeId,
@@ -52,6 +53,8 @@ export const NewThemeModal: React.FC<NewThemeModalProps> = ({
       statusTag: 'MONITORAMENTO_ATIVO',
       lifecycleStatus: 'CADASTRADO_AGUARDANDO_DISPARO',
       lifecycleProgressPercent: 0,
+      humanGates: initialGates,
+      human_gates: initialGates,
       narrativeInsights: {
         executiveLead: `O levantamento sobre "${title.trim()}" identifica maioria orgânica favorável (45,9% favorável contra 36,1% contrário na estimativa oficial corrigida), após a filtragem de 22,2% de postagens automatizadas e spam comercial.`,
         scenariosFinding: 'A comparação entre os cenários mostra que o volume bruto sem filtro inflava a percepção contrária em quase 12 pontos percentuais. Uma vez isoladas apenas as contas únicas orgânicas, o posicionamento favorável mostra-se consistente em todas as ponderações.',
@@ -392,6 +395,21 @@ export const NewThemeModal: React.FC<NewThemeModalProps> = ({
         },
       ],
     };
+
+    try {
+      fetch('/api/themes/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: themeId,
+          title: title.trim(),
+          committee: committee,
+          queries: queries.length ? queries : [title.trim()],
+        }),
+      }).catch(() => {});
+    } catch {
+      // offline fallback
+    }
 
     onAddTheme(newTheme);
     showToast(

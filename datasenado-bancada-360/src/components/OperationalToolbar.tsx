@@ -14,7 +14,7 @@ import {
   AlertTriangle,
   ShieldCheck,
 } from 'lucide-react';
-import { PlatformId, TimeWindow, LifecycleStatus, RateLimitAlertInfo, HumanGatesState } from '../types';
+import { PlatformId, TimeWindow, LifecycleStatus, RateLimitAlertInfo, HumanGatesState, normalizeHumanGates } from '../types';
 import { PLATFORM_INFO } from '../data/mockData';
 import { useToast } from './Toast';
 
@@ -68,6 +68,8 @@ export const OperationalToolbar: React.FC<OperationalToolbarProps> = ({
   onAdvanceLifecycle,
   rateLimitAlert,
   subrepresentationAlert,
+  humanGates,
+  onNavigateToHumanGates,
 }) => {
   const { showToast } = useToast();
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
@@ -84,12 +86,13 @@ export const OperationalToolbar: React.FC<OperationalToolbarProps> = ({
   const totalEstimatedSeconds = Math.max(20, Math.round((goldSampleSize / 550) * 45));
   const etaSeconds = Math.max(0, totalEstimatedSeconds - (elapsedSeconds % totalEstimatedSeconds));
 
+  const normalizedGates = humanGates ? normalizeHumanGates(humanGates) : null;
   const pendingGate =
-    humanGates?.bronzeGate.status === 'PENDENTE_APROVACAO_HUMANA'
+    normalizedGates?.bronzeGate.status === 'PENDENTE_APROVACAO_HUMANA'
       ? { name: 'Amostra Bruta (Bronze)', gate: 'bronze' }
-      : humanGates?.silverGate.status === 'PENDENTE_APROVACAO_HUMANA'
+      : normalizedGates?.silverGate.status === 'PENDENTE_APROVACAO_HUMANA'
       ? { name: 'Expurgo CIB & Spam (Silver)', gate: 'silver' }
-      : humanGates?.goldGate.status === 'PENDENTE_APROVACAO_HUMANA'
+      : normalizedGates?.goldGate.status === 'PENDENTE_APROVACAO_HUMANA'
       ? { name: 'Amostra Limpa & Pesos (Gold)', gate: 'gold' }
       : null;
 

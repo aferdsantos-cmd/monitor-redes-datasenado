@@ -10,11 +10,14 @@ from datetime import datetime, timezone
 import hashlib
 import hmac
 import io
+import math
 import os
 from pathlib import Path
 import re
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
 import zipfile
+
+import numpy as np
 
 from src.analytics.phase04_intelligence_orchestrator import (
     Phase04IntelligenceOrchestrator,
@@ -89,6 +92,104 @@ class HumanGateStatus:
     APROVADO_PELO_ANALISTA = "APROVADO_PELO_ANALISTA"
     REJEITADO_REPROCESSANDO = "REJEITADO_REPROCESSANDO"
     BLOQUEADO_AGUARDANDO_CAMADA_ANTERIOR = "BLOQUEADO_AGUARDANDO_CAMADA_ANTERIOR"
+
+
+def serialize_human_gates_dual_contract(gates: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    Garante que o mapa estruturado dos Portões Humanos exponha SIMULTANEAMENTE
+    e sincronizadamente as chaves em camelCase e snake_case tanto no nível raiz
+    quanto dentro dos dicionários de cada portão (Bronze, Silver e Gold).
+    Elimina qualquer risco de TypeError no Front-End React (Achado Crítico #1 / QA-F05V3-03).
+    """
+    if not gates or not isinstance(gates, dict):
+        gates = {}
+
+    raw_bronze = gates.get("bronze_gate") or gates.get("bronzeGate") or {}
+    raw_silver = gates.get("silver_gate") or gates.get("silverGate") or {}
+    raw_gold = gates.get("gold_gate") or gates.get("goldGate") or {}
+
+    b_status = raw_bronze.get("status") or HumanGateStatus.PENDENTE_APROVACAO_HUMANA
+    s_status = raw_silver.get("status") or HumanGateStatus.BLOQUEADO_AGUARDANDO_CAMADA_ANTERIOR
+    g_status = raw_gold.get("status") or HumanGateStatus.BLOQUEADO_AGUARDANDO_CAMADA_ANTERIOR
+
+    bronze_excluded = raw_bronze.get("excluded_record_ids")
+    if bronze_excluded is None:
+        bronze_excluded = raw_bronze.get("excludedRecordIds")
+    bronze_excluded_list = list(bronze_excluded or [])
+
+    silver_organic = raw_silver.get("overridden_to_organic_ids")
+    if silver_organic is None:
+        silver_organic = raw_silver.get("overriddenToOrganicIds")
+    silver_organic_list = list(silver_organic or [])
+
+    silver_quar = raw_silver.get("overridden_to_quarantine_ids")
+    if silver_quar is None:
+        silver_quar = raw_silver.get("overriddenToQuarantineIds")
+    silver_quar_list = list(silver_quar or [])
+
+    bronze_dict = {
+        "gate_id": raw_bronze.get("gate_id") or raw_bronze.get("gateId") or "gate_1_bronze",
+        "gateId": raw_bronze.get("gate_id") or raw_bronze.get("gateId") or "gate_1_bronze",
+        "name": raw_bronze.get("name") or "Portão 1 — Amostra Bruta (Bronze)",
+        "status": b_status,
+        "approved_at": raw_bronze.get("approved_at") or raw_bronze.get("approvedAt"),
+        "approvedAt": raw_bronze.get("approved_at") or raw_bronze.get("approvedAt"),
+        "approved_by": raw_bronze.get("approved_by") or raw_bronze.get("approvedBy"),
+        "approvedBy": raw_bronze.get("approved_by") or raw_bronze.get("approvedBy"),
+        "rejection_reason": raw_bronze.get("rejection_reason") or raw_bronze.get("rejectionReason"),
+        "rejectionReason": raw_bronze.get("rejection_reason") or raw_bronze.get("rejectionReason"),
+        "notes": raw_bronze.get("notes") or "",
+        "excluded_record_ids": bronze_excluded_list,
+        "excludedRecordIds": bronze_excluded_list,
+    }
+
+    silver_dict = {
+        "gate_id": raw_silver.get("gate_id") or raw_silver.get("gateId") or "gate_2_silver",
+        "gateId": raw_silver.get("gate_id") or raw_silver.get("gateId") or "gate_2_silver",
+        "name": raw_silver.get("name") or "Portão 2 — Limpeza CIB & Spam (Silver)",
+        "status": s_status,
+        "approved_at": raw_silver.get("approved_at") or raw_silver.get("approvedAt"),
+        "approvedAt": raw_silver.get("approved_at") or raw_silver.get("approvedAt"),
+        "approved_by": raw_silver.get("approved_by") or raw_silver.get("approvedBy"),
+        "approvedBy": raw_silver.get("approved_by") or raw_silver.get("approvedBy"),
+        "rejection_reason": raw_silver.get("rejection_reason") or raw_silver.get("rejectionReason"),
+        "rejectionReason": raw_silver.get("rejection_reason") or raw_silver.get("rejectionReason"),
+        "notes": raw_silver.get("notes") or "",
+        "overridden_to_organic_ids": silver_organic_list,
+        "overriddenToOrganicIds": silver_organic_list,
+        "overridden_to_quarantine_ids": silver_quar_list,
+        "overriddenToQuarantineIds": silver_quar_list,
+    }
+
+    gold_seed = raw_gold.get("random_seed") if raw_gold.get("random_seed") is not None else raw_gold.get("randomSeed", 42)
+    gold_target = raw_gold.get("target_sample_size") if raw_gold.get("target_sample_size") is not None else raw_gold.get("targetSampleSize", 550)
+
+    gold_dict = {
+        "gate_id": raw_gold.get("gate_id") or raw_gold.get("gateId") or "gate_3_gold",
+        "gateId": raw_gold.get("gate_id") or raw_gold.get("gateId") or "gate_3_gold",
+        "name": raw_gold.get("name") or "Portão 3 — Amostra Limpa & Ponderação (Gold)",
+        "status": g_status,
+        "approved_at": raw_gold.get("approved_at") or raw_gold.get("approvedAt"),
+        "approvedAt": raw_gold.get("approved_at") or raw_gold.get("approvedAt"),
+        "approved_by": raw_gold.get("approved_by") or raw_gold.get("approvedBy"),
+        "approvedBy": raw_gold.get("approved_by") or raw_gold.get("approvedBy"),
+        "rejection_reason": raw_gold.get("rejection_reason") or raw_gold.get("rejectionReason"),
+        "rejectionReason": raw_gold.get("rejection_reason") or raw_gold.get("rejectionReason"),
+        "notes": raw_gold.get("notes") or "",
+        "random_seed": int(gold_seed),
+        "randomSeed": int(gold_seed),
+        "target_sample_size": int(gold_target),
+        "targetSampleSize": int(gold_target),
+    }
+
+    return {
+        "bronze_gate": bronze_dict,
+        "bronzeGate": bronze_dict,
+        "silver_gate": silver_dict,
+        "silverGate": silver_dict,
+        "gold_gate": gold_dict,
+        "goldGate": gold_dict,
+    }
 
 
 class MonitoringLifecycleStateMachine:
@@ -179,25 +280,30 @@ class MonitoringLifecycleStateMachine:
     def get_state(self, theme_id: str) -> Dict[str, Any]:
         """Retorna o estado atual do tema solicitado."""
         if theme_id not in self._theme_states:
-            # Temas oficiais padrão iniciam como PRONTO
+            is_ready = (theme_id in ["eleicao_presidencia_senado", "pec_escala_6x1", "pl_ia_2338"])
             self._theme_states[theme_id] = {
                 "theme_id": theme_id,
-                "status": "PRONTO_PARA_ANALISE_E_BOLETIM",
-                "progress_percent": 100,
-                "current_step_label": "Dossiê Consolidado Disponível",
+                "status": "PRONTO_PARA_ANALISE_E_BOLETIM" if is_ready else "CADASTRADO_AGUARDANDO_DISPARO",
+                "progress_percent": 100 if is_ready else 0,
+                "current_step_label": "Dossiê Consolidado Disponível" if is_ready else "Cadastrado / Aguardando Disparo",
                 "last_update_utc": datetime.now(timezone.utc).isoformat(),
-                "history": ["CADASTRADO_AGUARDANDO_DISPARO", "PRONTO_PARA_ANALISE_E_BOLETIM"],
+                "history": ["CADASTRADO_AGUARDANDO_DISPARO", "PRONTO_PARA_ANALISE_E_BOLETIM"] if is_ready else ["CADASTRADO_AGUARDANDO_DISPARO"],
                 "live_counts_by_platform": {
-                    "youtube": 150, "telegram": 85, "x_twitter": 210,
-                    "instagram_facebook": 140, "tiktok": 95, "whatsapp": 40
+                    "youtube": 1500 if is_ready else 0, "telegram": 850 if is_ready else 0, "x_twitter": 2100 if is_ready else 0,
+                    "instagram_facebook": 1400 if is_ready else 0, "tiktok": 950 if is_ready else 0, "whatsapp": 450 if is_ready else 0
                 },
-                "human_gates": self._create_initial_human_gates(is_ready=True),
+                "human_gates": self._create_initial_human_gates(is_ready=is_ready),
             }
         else:
             if "human_gates" not in self._theme_states[theme_id]:
                 is_r = self._theme_states[theme_id].get("status") == "PRONTO_PARA_ANALISE_E_BOLETIM"
                 self._theme_states[theme_id]["human_gates"] = self._create_initial_human_gates(is_ready=is_r)
-        return dict(self._theme_states[theme_id])
+        
+        cur = self._theme_states[theme_id]
+        dual = serialize_human_gates_dual_contract(cur.get("human_gates"))
+        cur["human_gates"] = dual
+        cur["humanGates"] = dual
+        return dict(cur)
 
     def set_state(
         self,
@@ -242,6 +348,8 @@ class MonitoringLifecycleStateMachine:
             cur["live_counts_by_platform"] = live_counts
         cur["last_update_utc"] = datetime.now(timezone.utc).isoformat()
         cur["history"].append(status)
+        cur["human_gates"] = serialize_human_gates_dual_contract(gates)
+        cur["humanGates"] = cur["human_gates"]
         self._theme_states[theme_id] = cur
         return dict(cur)
 
@@ -269,6 +377,12 @@ class MonitoringLifecycleStateMachine:
                 gates["bronze_gate"]["approved_by"] = analyst
                 if gates["silver_gate"]["status"] == HumanGateStatus.BLOQUEADO_AGUARDANDO_CAMADA_ANTERIOR:
                     gates["silver_gate"]["status"] = HumanGateStatus.PENDENTE_APROVACAO_HUMANA
+                if state["status"] in [
+                    MonitoringLifecycleState.CADASTRADO_AGUARDANDO_DISPARO,
+                    MonitoringLifecycleState.VALIDANDO_SESSOES_CONECTORES,
+                    MonitoringLifecycleState.COLETA_EM_ANDAMENTO_6_REDES,
+                ]:
+                    self.set_state(theme_id, MonitoringLifecycleState.DESCONTAMINACAO_SILVER_CIB_SPAM, "Camada Bronze homologada. Limpeza Silver liberada.")
             elif gate in ["silver", "gate_2_silver", "gate2"]:
                 if gates["bronze_gate"]["status"] != HumanGateStatus.APROVADO_PELO_ANALISTA:
                     raise ValueError(
@@ -279,6 +393,8 @@ class MonitoringLifecycleStateMachine:
                 gates["silver_gate"]["approved_by"] = analyst
                 if gates["gold_gate"]["status"] == HumanGateStatus.BLOQUEADO_AGUARDANDO_CAMADA_ANTERIOR:
                     gates["gold_gate"]["status"] = HumanGateStatus.PENDENTE_APROVACAO_HUMANA
+                if state["status"] == MonitoringLifecycleState.DESCONTAMINACAO_SILVER_CIB_SPAM:
+                    self.set_state(theme_id, MonitoringLifecycleState.CALIBRACAO_RAKING_IPF_ROGAN_GLADEN, "Camada Silver homologada. Calibração Gold liberada.")
             elif gate in ["gold", "gate_3_gold", "gate3"]:
                 if gates["silver_gate"]["status"] != HumanGateStatus.APROVADO_PELO_ANALISTA:
                     raise ValueError(
@@ -287,18 +403,23 @@ class MonitoringLifecycleStateMachine:
                 gates["gold_gate"]["status"] = HumanGateStatus.APROVADO_PELO_ANALISTA
                 gates["gold_gate"]["approved_at"] = now_str
                 gates["gold_gate"]["approved_by"] = analyst
+                if state["status"] == MonitoringLifecycleState.CALIBRACAO_RAKING_IPF_ROGAN_GLADEN:
+                    self.set_state(theme_id, MonitoringLifecycleState.PRONTO_PARA_ANALISE_E_BOLETIM, "Camada Gold homologada. Dossiê analítico liberado.")
             else:
                 raise ValueError(f"Portão desconhecido para aprovação: '{gate}'. Válidos: bronze, silver, gold.")
 
         elif action == "exclude_noise":
             rec_id = params.get("record_id")
-            if rec_id and rec_id not in gates["bronze_gate"]["excluded_record_ids"]:
-                gates["bronze_gate"]["excluded_record_ids"].append(rec_id)
+            if rec_id:
+                if rec_id not in gates["bronze_gate"]["excluded_record_ids"]:
+                    gates["bronze_gate"]["excluded_record_ids"].append(rec_id)
+                gates["bronze_gate"]["excludedRecordIds"] = list(gates["bronze_gate"]["excluded_record_ids"])
 
         elif action == "include_record":
             rec_id = params.get("record_id")
             if rec_id in gates["bronze_gate"]["excluded_record_ids"]:
                 gates["bronze_gate"]["excluded_record_ids"].remove(rec_id)
+            gates["bronze_gate"]["excludedRecordIds"] = list(gates["bronze_gate"]["excluded_record_ids"])
 
         elif action == "rerun_bronze_extraction":
             gates["bronze_gate"]["status"] = HumanGateStatus.PENDENTE_APROVACAO_HUMANA
@@ -340,12 +461,16 @@ class MonitoringLifecycleStateMachine:
         else:
             raise ValueError(f"Ação de manipulação Medallion inválida: '{action}'")
 
-        state["human_gates"] = gates
+        dual_gates = serialize_human_gates_dual_contract(gates)
+        state["human_gates"] = dual_gates
+        state["humanGates"] = dual_gates
         self._theme_states[theme_id] = state
         return {
             "theme_id": theme_id,
             "action": action,
-            "human_gates": gates,
+            "human_gates": dual_gates,
+            "humanGates": dual_gates,
+            "lifecycle_status": self.get_state(theme_id)["status"],
             "status": "SUCCESS",
         }
 
@@ -416,20 +541,41 @@ class MonitoringLifecycleStateMachine:
         p_obs = sum(cm[r]["favoravel"] for r in cm) / max(1, total)
         denom = max(0.05, se + sp - 1.0)
         p_rg = max(0.0, min(1.0, round((p_obs + sp - 1.0) / denom, 3)))
+        youden_alert = bool(youden_j <= 0.15)
 
         metrics = {
             "total_audited": len(state["blind_audit"]["audited_items"]),
+            "totalAudited": len(state["blind_audit"]["audited_items"]),
             "confusion_matrix": cm,
+            "confusionMatrix": cm,
             "cohen_kappa": kappa,
+            "cohenKappa": kappa,
             "sensitivity": round(se, 3),
             "specificity": round(sp, 3),
             "youden_j": youden_j,
+            "youdenJ": youden_j,
+            "youden_alert": youden_alert,
+            "youdenAlert": youden_alert,
             "rogan_gladen_prevalence": p_rg,
+            "roganGladenPrevalence": round(p_rg * 100, 1),
             "observed_agreement": round(po, 3),
+            "observedAgreement": round(po, 3),
             "last_audit_result": {
                 "record_id": record_id,
+                "recordId": record_id,
                 "human_stance": stance_upper,
+                "humanStance": stance_upper,
                 "ai_stance": ai_stance,
+                "aiStance": ai_stance,
+                "match": match,
+            },
+            "lastAuditResult": {
+                "record_id": record_id,
+                "recordId": record_id,
+                "human_stance": stance_upper,
+                "humanStance": stance_upper,
+                "ai_stance": ai_stance,
+                "aiStance": ai_stance,
                 "match": match,
             },
         }
@@ -639,6 +785,7 @@ class DataSenadoWorkbenchBackendBridge:
         self.connectors_manager = SocialMediaConnectorsSessionManager()
         self.lifecycle_manager = MonitoringLifecycleStateMachine()
         self.radar_collector = DailyLegislativeRadarCollector()
+        self._custom_themes_store: Dict[str, Any] = {}
 
     def build_complete_frontend_theme_dataset(
         self,
@@ -659,9 +806,19 @@ class DataSenadoWorkbenchBackendBridge:
         for ct in _CUSTOM_THEMES_REGISTRY:
             if isinstance(ct, dict) and "id" in ct:
                 themes_map[ct["id"]] = ct
+        for cid, cval in self._custom_themes_store.items():
+            themes_map[cid] = cval
+
+        lifecycle = self.lifecycle_manager.get_state(theme_id)
+        human_gates = lifecycle.get("human_gates") or MonitoringLifecycleStateMachine._create_initial_human_gates(is_ready=(theme_id in ["eleicao_presidencia_senado", "pec_escala_6x1", "pl_ia_2338"]))
+        dual_gates = serialize_human_gates_dual_contract(human_gates)
+
+        gold_cfg = dual_gates.get("gold_gate", {})
+        gate_target_n = gold_cfg.get("target_sample_size") or gold_cfg.get("targetSampleSize")
+        random_seed = int(gold_cfg.get("random_seed") if gold_cfg.get("random_seed") is not None else gold_cfg.get("randomSeed", 42))
 
         theme_cfg = themes_map.get(theme_id, {})
-        effective_n = target_n or theme_cfg.get("target_sample_size_n") or blind_validation_sample_size
+        effective_n = target_n or theme_cfg.get("target_sample_size_n") or gate_target_n or blind_validation_sample_size
 
         target_platforms = selected_platforms or theme_cfg.get("selected_platforms") or [
             "youtube", "telegram", "x_twitter", "instagram_facebook", "tiktok", "whatsapp"
@@ -738,26 +895,39 @@ class DataSenadoWorkbenchBackendBridge:
         m4a = p4_dossier.get("engine_4a_causal_and_features", {})
 
         n_gold = effective_n
-        u_org = stage1.get("silver_organic_accounts") or (n_gold * 2)
+        bronze_excluded = set(dual_gates.get("bronze_gate", {}).get("excluded_record_ids", []))
+        silver_overridden_org = set(dual_gates.get("silver_gate", {}).get("overridden_to_organic_ids", []))
+        silver_overridden_quar = set(dual_gates.get("silver_gate", {}).get("overridden_to_quarantine_ids", []))
+
+        base_bronze = stage1.get("bronze_ingested") or (n_gold * 3)
+        bronze_total = max(10, base_bronze - len(bronze_excluded))
+        base_spam = int(n_gold * 0.22)
+        silver_cib_bots = max(0, int(n_gold * 0.15) - len(silver_overridden_org) + len(silver_overridden_quar))
+        u_org = max(10, (stage1.get("silver_organic_accounts") or (n_gold * 2)) + len(silver_overridden_org) - len(silver_overridden_quar))
+        artificiality_rate = round((silver_cib_bots + base_spam) / max(1, bronze_total) * 100, 1)
 
         theme_hash_int = int(hashlib.sha256(theme_id.encode()).hexdigest()[:4], 16)
         base_deff = float(stage2.get("kish_design_effect_deff") or 1.38)
-        kish_deff = round(base_deff + ((theme_hash_int % 25) - 12) * 0.01, 2)
+        kish_deff = round(base_deff + ((theme_hash_int + random_seed) % 25 - 12) * 0.01, 2)
         if kish_deff <= 1.0:
             kish_deff = 1.18
 
+        margin_of_error = round(1.96 * math.sqrt((0.5 * 0.5 * kish_deff) / max(1, n_gold)) * 100, 1)
+        if margin_of_error < 0.5:
+            margin_of_error = 3.5
+
         medallion = {
-            "bronzeTotal": stage1.get("bronze_ingested") or (n_gold * 3),
+            "bronzeTotal": bronze_total,
             "queriesUsed": theme_cfg.get("collection_query_terms", [title]),
-            "silverSpam": int(n_gold * 0.22),
-            "silverCibBots": int(n_gold * 0.15),
-            "silverBotAccounts": int(n_gold * 0.15),
-            "artificialityRate": round(float(m4a.get("diagnostics", {}).get("mean_lexical_bias", 0.14) * 100), 1),
+            "silverSpam": base_spam,
+            "silverCibBots": silver_cib_bots,
+            "silverBotAccounts": silver_cib_bots,
+            "artificialityRate": artificiality_rate,
             "uOrgAccounts": u_org,
             "goldSampleSize": n_gold,
             "kishDeff": kish_deff,
             "nEffective": int(n_gold / max(1.0, kish_deff)),
-            "marginOfError": round(float(stage2.get("effective_sampling_uncertainty_pp") or 3.8), 1),
+            "marginOfError": margin_of_error,
             "psiDrift": round(float(drift_data.get("psi_score", 0.04)), 3),
             "psiStatus": drift_data.get("psi_status", "ESTAVEL"),
             "youdenJ": round(float(val_fold.get("youden_j_index") or stage2.get("youden_j_index", 0.65)), 3),
@@ -979,22 +1149,26 @@ class DataSenadoWorkbenchBackendBridge:
                 "isManualQuarantine": rec_id in silver_overridden_quar,
             })
 
+        rng = np.random.default_rng(random_seed)
         gold_sample_units = []
+        stances_pool = ["FAVORAVEL", "CONTRARIO", "NEUTRO"]
         for i in range(15):
-            plat = active_platform_keys[i % len(active_platform_keys)]
-            uf = BRAZIL_27_UFS_LIST[(i * 2) % len(BRAZIL_27_UFS_LIST)]
+            plat = active_platform_keys[int(rng.integers(0, len(active_platform_keys)))]
+            uf = BRAZIL_27_UFS_LIST[int(rng.integers(0, len(BRAZIL_27_UFS_LIST)))]
             macro = "Sudeste" if uf in ["SP", "RJ", "MG", "ES"] else ("Nordeste" if uf in ["BA", "PE", "CE", "MA", "PB", "RN", "PI", "AL", "SE"] else "Sul")
+            st = stances_pool[int(rng.integers(0, 3))]
+            raking_w = round(float(rng.uniform(0.70, 1.35)), 2)
             gold_sample_units.append({
-                "id": f"gld_unit_{theme_id}_{i+1}",
-                "authorIdHash": hashlib.sha256(f"autor_gold_{theme_id}_{i}".encode()).hexdigest()[:10] + "...",
+                "id": f"gld_unit_{theme_id}_s{random_seed}_{i+1}",
+                "authorIdHash": hashlib.sha256(f"autor_gold_{theme_id}_{random_seed}_{i}".encode()).hexdigest()[:10] + "...",
                 "platform": plat,
                 "uf": uf,
                 "macroregion": macro,
-                "postsCollapsed": 1 + (i % 2),
+                "postsCollapsed": int(rng.integers(1, 3)),
                 "hajekWeight": 1.0,
-                "rakingWeight": round(0.85 + (i % 5) * 0.15, 2),
-                "sanitizedText": f"Manifestação selecionada na amostra estratificada para representar o estrato {plat}/{macro}.",
-                "stance": "FAVORAVEL" if i % 3 == 0 else ("CONTRARIO" if i % 3 == 1 else "NEUTRO"),
+                "rakingWeight": raking_w,
+                "sanitizedText": f"[Seed {random_seed}] Manifestação estratificada sobre {title} ({committee}) na rede {plat}/{uf} com postura {st}.",
+                "stance": st,
             })
 
         blind_audit_items = []
@@ -1043,7 +1217,8 @@ class DataSenadoWorkbenchBackendBridge:
             "statusTag": "Oficial",
             "lifecycleStatus": lifecycle["status"],
             "lifecycleProgressPercent": lifecycle["progress_percent"],
-            "humanGates": human_gates,
+            "humanGates": dual_gates,
+            "human_gates": dual_gates,
             "bronzeSampleRecords": bronze_sample_records,
             "silverQuarantineRecords": silver_quarantine_records,
             "silverOrganicRecords": silver_organic_records,
@@ -1175,12 +1350,20 @@ class DataSenadoWorkbenchBackendBridge:
     def generate_executive_docx_report(self, theme_id: str) -> io.BytesIO:
         """
         Gera em memória (Zero-Footprint) o Dossiê Executivo em formato Microsoft Word (.docx).
-        Atende integralmente ao Módulo 4 da Bancada e SIM-F05-01.
+        Atende integralmente ao Módulo 4 da Bancada, SIM-F05-01, Achado Crítico #7 e QA-F05V3-12.
         """
         dataset = self.build_complete_frontend_theme_dataset(theme_id)
         title = dataset.get("title", theme_id)
         committee = dataset.get("committee", "CAS")
         scenarios = dataset.get("scenarios", [])
+        gates = dataset.get("humanGates") or dataset.get("human_gates") or {}
+        b_gate = gates.get("bronzeGate") or gates.get("bronze_gate") or {}
+        s_gate = gates.get("silverGate") or gates.get("silver_gate") or {}
+        g_gate = gates.get("goldGate") or gates.get("gold_gate") or {}
+
+        b_status = b_gate.get("status", "PENDENTE_APROVACAO_HUMANA")
+        s_status = s_gate.get("status", "BLOQUEADO_AGUARDANDO_CAMADA_ANTERIOR")
+        g_status = g_gate.get("status", "BLOQUEADO_AGUARDANDO_CAMADA_ANTERIOR")
 
         doc_xml = f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
@@ -1212,12 +1395,48 @@ class DataSenadoWorkbenchBackendBridge:
       <w:r><w:t>• {s_name}: Favorável {fav}% | Contrário {cont}% | Neutro {neu}%</w:t></w:r>
     </w:p>"""
 
-        doc_xml += """
+        doc_xml += f"""
     <w:p>
       <w:r><w:rPr><w:b/></w:rPr><w:t>2. Metodologia Amostral e Salvaguardas LGPD:</w:t></w:r>
     </w:p>
     <w:p>
-      <w:r><w:t>Universo Alvo: Discurso Público Digital Observado (U_Org). Pseudonimização por HMAC-SHA256 fail-closed sem retenção de dados pessoais brutos em disco. Truncamento de pesos de Kish [0.25, 4.00].</w:t></w:r>
+      <w:r><w:t>Universo Alvo: Discurso Público Digital Observado (U_Org). Pseudonimização por HMAC-SHA256 fail-closed sem retenção de dados pessoais brutos em disco (Zero PII). Truncamento de pesos de Kish [0.25, 4.00].</w:t></w:r>
+    </w:p>
+    <w:p>
+      <w:r><w:rPr><w:b/></w:rPr><w:t>3. Status de Homologação dos Portões Humanos (Medallion):</w:t></w:r>
+    </w:p>
+    <w:p>
+      <w:r><w:t>• Portão 1 (Camada Bronze - Amostra Bruta): {b_status}</w:t></w:r>
+    </w:p>
+    <w:p>
+      <w:r><w:t>• Portão 2 (Camada Silver - CIB &amp; Spam): {s_status}</w:t></w:r>
+    </w:p>
+    <w:p>
+      <w:r><w:t>• Portão 3 (Camada Gold - Amostra Calibrada e Ponderação): {g_status}</w:t></w:r>
+    </w:p>
+    <w:p>
+      <w:r><w:rPr><w:b/></w:rPr><w:t>4. Limitações Metodológicas e Fronteiras de Inferência Institucional:</w:t></w:r>
+    </w:p>
+    <w:p>
+      <w:r><w:rPr><w:b/></w:rPr><w:t>O QUE O RELATÓRIO PODE AFIRMAR:</w:t></w:r>
+    </w:p>
+    <w:p>
+      <w:r><w:t>• O levantamento retrata a distribuição e o comportamento de manifestações de contas orgânicas ativas observadas nas 6 plataformas analisadas durante o período monitorado.</w:t></w:r>
+    </w:p>
+    <w:p>
+      <w:r><w:t>• As estimativas refletem o estado calibrado por amostragem probabilística e correção de Rogan-Gladen sobre o discurso público digital observado.</w:t></w:r>
+    </w:p>
+    <w:p>
+      <w:r><w:rPr><w:b/></w:rPr><w:t>O QUE O RELATÓRIO JAMAIS PODE AFIRMAR:</w:t></w:r>
+    </w:p>
+    <w:p>
+      <w:r><w:t>• JAMAIS afirmar que este relatório representa a opinião de toda a população brasileira ou do eleitorado nacional em geral.</w:t></w:r>
+    </w:p>
+    <w:p>
+      <w:r><w:t>• JAMAIS substituir pesquisas amostrais probabilísticas domiciliares ou telefônicas conduzidas pelo DataSenado.</w:t></w:r>
+    </w:p>
+    <w:p>
+      <w:r><w:t>• JAMAIS interpretar precedência temporal de Granger como causalidade substantiva ou física direta.</w:t></w:r>
     </w:p>
     <w:sectPr/>
   </w:body>
@@ -1245,8 +1464,153 @@ class DataSenadoWorkbenchBackendBridge:
         return buffer
 
     def register_custom_theme(self, theme_spec: Dict[str, Any]) -> Dict[str, Any]:
-        """Registra dinamicamente novo tema aplicando a trava de neutralidade M-04."""
-        return validate_new_theme_registration(theme_spec)
+        """Registra dinamicamente novo tema aplicando a trava de neutralidade M-04 e armazena em memória."""
+        res = validate_new_theme_registration(theme_spec)
+        theme_id = res["theme_id"]
+        custom_dict = {
+            "id": theme_id,
+            "theme_id": theme_id,
+            "title": res["title"],
+            "name": res["title"],
+            "committee": res["committee"],
+            "senate_committee": res["committee"],
+            "target_sample_size_n": theme_spec.get("target_sample_size_n", 550),
+            "window_days": theme_spec.get("window_days", 7),
+            "collection_query_terms": res["queries"],
+            "selected_platforms": theme_spec.get("selected_platforms") or ["youtube", "telegram", "x_twitter", "instagram_facebook", "tiktok", "whatsapp"],
+        }
+        self._custom_themes_store[theme_id] = custom_dict
+        self.lifecycle_manager.get_state(theme_id)
+        return res
+
+    def get_methodology_treatise_payload(self) -> Dict[str, Any]:
+        """
+        Retorna o Tratado Metodológico Completo e Bilíngue (Leigo vs. Científico)
+        para consumo pelo Módulo 6 da Bancada Analítica e documentação oficial (QA-F05V3-11).
+        """
+        return {
+            "title": "Tratado Metodológico e Salvaguardas Científicas DataSenado",
+            "version": "v5.1.1-fase05-v3",
+            "last_updated_utc": datetime.now(timezone.utc).isoformat(),
+            "pipeline_steps": [
+                {
+                    "step": 1,
+                    "title": "Coleta Neutra e Interoperável (Regra M-04)",
+                    "layman": "Busca nas 6 redes sociais usando apenas termos neutros e institucionais, sem viés induzido.",
+                    "math": "Operador de busca B(Q) com interseção nula com léxicos valorativos, garantindo probabilidade de captura constante.",
+                    "formula": "Pr(Captura | Y_i = k) = Pr(Captura | Y_i = l), ∀ k, l ∈ {Fav, Contr, Neut}",
+                },
+                {
+                    "step": 2,
+                    "title": "Pseudonimização Criptográfica LGPD (Fail-Closed)",
+                    "layman": "Anonimização de identificadores pessoais por HMAC-SHA256 em memória volátil, sem gravar PII em disco.",
+                    "math": "h_i = HMAC_SHA256(K, a_i) com chave K de 256 bits efêmera e eliminação imediata de a_i.",
+                    "formula": "h_i = HMAC_{SHA256}(K, a_i), com K ∈ {0,1}^{256} e a_i := None",
+                },
+                {
+                    "step": 3,
+                    "title": "Expurgo de Robôs e Spam Comercial (Camada Silver)",
+                    "layman": "Detecção e quarentena de comportamento inautêntico coordenado (CIB), disparos em rajada e spam comercial.",
+                    "math": "MinHash LSH com Jaccard >= 0.85 em janela <= 10s e Coeficiente de Burstiness B > 0.60.",
+                    "formula": "J(A, B) = |A ∩ B| / |A ∪ B| ≥ 0.85 e B = (σ_τ - m_τ) / (σ_τ + m_τ) > 0.60",
+                },
+                {
+                    "step": 4,
+                    "title": 'Colapso por Conta Única: Princípio "1 Cidadão = 1 Voz"',
+                    "layman": "Consolidação de múltiplas postagens de uma mesma conta em uma única unidade amostral elementar.",
+                    "math": "Definição de u_i = 1 em U_Org com peso base de Hájek inversamente proporcional à hiperatividade m_i.",
+                    "formula": "u_i = 1 e d_i^{Hajek} = 1 / m_i, com ∑_{j=1}^{m_i} d_{ij} = 1",
+                },
+                {
+                    "step": 5,
+                    "title": "Amostragem Estratificada de Neyman (27 UFs × 6 Redes)",
+                    "layman": "Sorteio de amostra representativa de 550 a 1.200 contas distribuídas entre as plataformas e macrorregiões.",
+                    "math": "Alocação de Neyman n_h = n * (N_h * S_h) / ∑(N_k * S_k) sobre estratos com π_i > 0.",
+                    "formula": "n_h = n · (N_h σ_h) / (∑_{k=1}^H N_k σ_k), com π_i > 0",
+                },
+                {
+                    "step": 6,
+                    "title": "Os Três Cenários de Ponderação e Calibração Raking IPF",
+                    "layman": "Cenário 1 (Hájek orgânico), Cenário 2 (Equiponderado por rede) e Cenário 3 (Calibrado IBGE/PNAD).",
+                    "math": "Iterative Proportional Fitting (Deming & Stephan, 1940) com weight trimming de Kish [0.25, 4.00].",
+                    "formula": "w_i^{(t+1)} = w_i^{(t)} · (T_m / ∑_{j ∈ S_m} w_j^{(t)}), com w_i ∈ [0.25, 4.00]",
+                },
+                {
+                    "step": 7,
+                    "title": "Classificação PNL e Correção Oficial de Rogan-Gladen",
+                    "layman": "Desconto matemático dos erros da inteligência artificial através da Sensibilidade e Especificidade humanas.",
+                    "math": "Estimador de Rogan-Gladen (1978) sob condição de Youden J = Se + Sp - 1 > 0.15.",
+                    "formula": "\\hat{p}_{RG} = (p_{obs} + Sp - 1) / (Se + Sp - 1), com J = Se + Sp - 1 > 0.15",
+                },
+                {
+                    "step": 8,
+                    "title": "Topologia de Bolhas (Newman), Espectros e Causalidade de Granger",
+                    "layman": "Mapeamento de modularidade comunitária, pontes transversais e precedência temporal de pauta.",
+                    "math": "Modularidade Q de Newman e teste F bivariado de Granger com lags ótimos.",
+                    "formula": "Q = (1/2m) ∑_{vw} [A_{vw} - (k_v k_w / 2m)] δ(c_v, c_w)",
+                },
+            ],
+            "mathematical_criteria": [
+                {
+                    "criterion": "n = 550 (faixas 300 a 1.200)",
+                    "name": "Tamanho Amostral Auditado",
+                    "why_layman": "Garante margem de erro segura de até ±4,9 p.p. a 95% de confiança.",
+                    "why_math": "Com DEFF de Kish ≈ 1.38, tamanho efetivo n_eff ≈ 398, assegurando erro amostral controlado.",
+                },
+                {
+                    "criterion": "k ≥ 5",
+                    "name": "Limiar de k-Anonimato (LGPD)",
+                    "why_layman": "Impede reidentificação de cidadãos pela combinação de cidade, rede e opinião.",
+                    "why_math": "Critério de Sweeney (2002) exigindo pelo menos 5 registros por partição quase-identificadora.",
+                },
+                {
+                    "criterion": "[0.25, 4.00]",
+                    "name": "Truncamento de Pesos de Raking IPF",
+                    "why_layman": "Evita que uma única conta ganhe peso desmedido no resultado final.",
+                    "why_math": "Weight trimming (Potter, 1990) controlando o coeficiente de variação dos pesos.",
+                },
+                {
+                    "criterion": "J = Se + Sp - 1 > 0.15",
+                    "name": "Índice J de Youden (Fail-Closed)",
+                    "why_layman": "Exige que o classificador seja significativamente melhor que o acaso antes de aceitar os dados.",
+                    "why_math": "Impede variância assintótica infinita no denominador de Rogan-Gladen.",
+                },
+                {
+                    "criterion": "κ ≥ 0.70",
+                    "name": "Concordância Kappa de Cohen",
+                    "why_layman": "Comprova concordância substancial entre analistas humanos e o classificador.",
+                    "why_math": "Escala de Landis & Koch (1977) descontando a concordância casual esperada.",
+                },
+                {
+                    "criterion": "Jaccard ≥ 0.85 & Δt ≤ 10s",
+                    "name": "Detecção de Robôs e CIB",
+                    "why_layman": "Detecta postagens repetidas disparadas em rajada simultânea por automações.",
+                    "why_math": "LSH MinHash capturando quase-duplicatas em rajada temporal de alta frequência.",
+                },
+            ],
+            "bibliographic_references": [
+                {"author": "Kish, Leslie", "year": 1965, "title": "Survey Sampling", "doi": "10.1002/bimj.19680100122"},
+                {"author": "Deming, W. Edwards & Stephan, Frederick F.", "year": 1940, "title": "On a Least Squares Adjustment of a Sampled Frequency Table", "doi": "10.1214/aoms/1177731829"},
+                {"author": "Rogan, Walter J. & Gladen, Beth", "year": 1978, "title": "Estimating prevalence from the results of a screening test", "doi": "10.1093/oxfordjournals.aje.a112510"},
+                {"author": "Youden, William J.", "year": 1950, "title": "Index for rating diagnostic tests", "doi": "10.1002/1097-0142(1950)3:1<32::aid-cncr2820030106>3.0.co;2-3"},
+                {"author": "Cohen, Jacob", "year": 1960, "title": "A Coefficient of Agreement for Nominal Scales", "doi": "10.1177/001316446002000104"},
+                {"author": "Newman, Mark E. J.", "year": 2006, "title": "Modularity and community structure in networks", "doi": "10.1073/pnas.0601602103"},
+                {"author": "Granger, Clive W. J.", "year": 1969, "title": "Investigating Causal Relations by Econometric Models and Cross-spectral Methods", "doi": "10.2307/1912791"},
+                {"author": "Meng, Xiao-Li", "year": 2018, "title": "Statistical Paradises and Paradoxes in Big Data", "doi": "10.1214/18-AOAS1185BR"},
+            ],
+            "methodological_boundaries": {
+                "can_state": [
+                    "Distribuição das manifestações de contas orgânicas ativas observadas nas 6 plataformas monitoradas.",
+                    "Tendências de engajamento e polarização entre os estratos analisados.",
+                    "Estimativas estatisticamente corrigidas para o universo do discurso público digital capturado.",
+                ],
+                "cannot_state": [
+                    "JAMAIS extrapolar como pesquisa representativa de toda a população brasileira ou eleitorado nacional.",
+                    "JAMAIS substituir pesquisas probabilísticas de opinião pública conduzidas pelo DataSenado.",
+                    "JAMAIS interpretar precedência de Granger como causalidade substantiva ou física direta.",
+                ],
+            },
+        }
 
     def manipulate_medallion_layer(
         self,
@@ -1277,10 +1641,15 @@ class DataSenadoWorkbenchBackendBridge:
         text_clean = str(text or "").strip()
         if not text_clean:
             raise ValueError("O texto para o simulador não pode ser vazio.")
+        if len(text_clean) > 5000:
+            raise ValueError("Violação AppSec: O texto para o simulador excede o limite máximo de 5000 caracteres.")
 
-        # Passo 1: LGPD & AppSec
-        scrubbed = re.sub(r"@[\w_]+", "@usuario_anonimizado", text_clean)
+        # Passo 1: LGPD & AppSec (Neutralização de scripts e sanitização de PII)
+        scrubbed = re.sub(r"<\s*script[^>]*>.*?<\s*/\s*script\s*>", "", text_clean, flags=re.IGNORECASE | re.DOTALL)
+        scrubbed = re.sub(r"<\s*iframe[^>]*>.*?<\s*/\s*iframe\s*>", "", scrubbed, flags=re.IGNORECASE | re.DOTALL)
         scrubbed = re.sub(r"<[^>]+>", "", scrubbed)
+        scrubbed = re.sub(r"javascript:\S*", "", scrubbed, flags=re.IGNORECASE)
+        scrubbed = re.sub(r"@[\w_]+", "@usuario_anonimizado", scrubbed)
         key_bytes = self.hmac_secret_key.encode("utf-8")
         author_hash = hmac.new(key_bytes, f"sandbox_{scrubbed[:20]}".encode(), hashlib.sha256).hexdigest()
         step1 = {

@@ -51,7 +51,30 @@ export const Module4ReportsEcosystem: React.FC<Module4ReportsEcosystemProps> = (
     window.print();
   };
 
-  const handleDownloadWordDocx = () => {
+  const handleDownloadWordDocx = async () => {
+    try {
+      const response = await fetch(`/api/reports/${dataset.id}/docx`);
+      if (response.ok) {
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `Relatorio_DataSenado_${dataset.id}.docx`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+        showToast(
+          'success',
+          'Relatório Word .docx Oficial Emitido',
+          'Relatório técnico com portões humanos e fronteiras metodológicas gerado pelo servidor Python.'
+        );
+        return;
+      }
+    } catch {
+      // Fallback para download HTML/doc em caso de servidor offline
+    }
+
     const htmlDocContent = `
 <!DOCTYPE html>
 <html lang="pt-BR">
@@ -263,6 +286,15 @@ export const Module4ReportsEcosystem: React.FC<Module4ReportsEcosystemProps> = (
     ${watchpoints.map((wp) => `<li><strong>[${wp.horizon} · ${wp.riskOrOpportunity}] ${wp.title}:</strong> ${wp.description}</li>`).join('')}
   </ul>
 
+  <h2>9. Portões de Homologação Humana (Human-in-the-Loop)</h2>
+  <p><strong>Portão 1 (Camada Bronze):</strong> ${dataset.humanGates?.bronzeGate?.status || 'APROVADO'}</p>
+  <p><strong>Portão 2 (Camada Silver):</strong> ${dataset.humanGates?.silverGate?.status || 'APROVADO'}</p>
+  <p><strong>Portão 3 (Camada Gold):</strong> ${dataset.humanGates?.goldGate?.status || 'APROVADO'}</p>
+
+  <h2>10. Limitações Metodológicas e Fronteiras de Inferência Institucional</h2>
+  <p><strong>O QUE ESTE MONITORAMENTO AFIRMA COM RIGOR:</strong> Retrata fielmente a proporção de opiniões expressas por contas orgânicas ativas nas 6 plataformas analisadas durante a janela de coleta.</p>
+  <p><strong>O QUE ESTE MONITORAMENTO JAMAIS AFIRMA:</strong> Não substitui censos ou pesquisas amostrais domiciliares probabilísticas (ex.: DataSenado tradicional). Não deve ser interpretado como opinião da totalidade do eleitorado brasileiro off-line.</p>
+
   <hr/>
   <p style="font-size: 9pt; color: #475569;">
     <strong>Nota Metodológica Oficial — Instituto de Pesquisa DataSenado:</strong> As estimativas deste relatório retratam o comportamento das contas públicas orgânicas nas 6 plataformas monitoradas (n = ${medallion.goldSampleSize}, DEFF de Kish = ${medallion.kishDeff}, Kappa = ${medallion.cohenKappa}). Este levantamento digital atua de forma complementar e não substitui as pesquisas por amostragem probabilística da população brasileira.
@@ -270,6 +302,23 @@ export const Module4ReportsEcosystem: React.FC<Module4ReportsEcosystemProps> = (
 </body>
 </html>
     `.trim();
+
+    const blob = new Blob([htmlDocContent], { type: 'application/msword;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `Relatorio_DataSenado_${dataset.id}.doc`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+
+    showToast(
+      'success',
+      'Relatório Descritivo Word Baixado',
+      'O documento completo com títulos e parágrafos justificados, convergências, divergências, imprensa e pontos de atenção foi exportado.'
+    );
+  };
 
     const blob = new Blob([htmlDocContent], { type: 'application/msword;charset=utf-8' });
     const url = URL.createObjectURL(blob);

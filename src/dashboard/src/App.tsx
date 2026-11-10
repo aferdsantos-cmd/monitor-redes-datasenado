@@ -15,7 +15,7 @@ import { XaiInspectionDrawer } from './components/modals/XaiInspectionDrawer';
 import { EcosystemHomePage, EcosystemSection } from './components/pages/EcosystemHomePage';
 import { DebateHubPage } from './components/pages/DebateHubPage';
 import { EcosystemOtherModules } from './components/pages/EcosystemOtherModules';
-import { TimeWindow, PlatformId, ThemeDataset, AuditRecord } from './types';
+import { TimeWindow, PlatformId, ThemeDataset, AuditRecord, normalizeHumanGates } from './types';
 import { THEMES_DATA, BOILING_TOPICS_LIST } from './data/mockData';
 
 export function DataSenadoApp() {
@@ -89,8 +89,60 @@ export function DataSenadoApp() {
     fetchBackendTheme();
   }, [currentThemeId, timeWindow, goldSampleSize]);
 
-  const handleAdvanceLifecycle = () => {
+  const handleDatasetUpdated = (updatedPartial: Partial<ThemeDataset>) => {
+    setThemesMap((prev) => {
+      const current = prev[currentThemeId];
+      if (!current) return prev;
+      const normalizedGates = updatedPartial.humanGates
+        ? normalizeHumanGates(updatedPartial.humanGates)
+        : (updatedPartial.human_gates ? normalizeHumanGates(updatedPartial.human_gates) : current.humanGates);
+      return {
+        ...prev,
+        [currentThemeId]: {
+          ...current,
+          ...updatedPartial,
+          humanGates: normalizedGates,
+          human_gates: normalizedGates,
+        },
+      };
+    });
+  };
+
+  const handleAdvanceLifecycle = async () => {
     const currentStatus = currentDataset?.lifecycleStatus || 'PRONTO_PARA_ANALISE_E_BOLETIM';
+    const gates = normalizeHumanGates(currentDataset?.humanGates);
+
+    // Trava Estrita Anti-Atalho de Portões Humanos (Pilares 1 e 2)
+    if (currentStatus === 'COLETA_EM_ANDAMENTO_6_REDES' && gates.bronzeGate.status !== 'APROVADO_PELO_ANALISTA') {
+      showToast(
+        'error',
+        'Portão Humano 1 Pendente',
+        'A Camada Bronze requer homologação formal do analista no Módulo 5 antes de avançar para a Descontaminação Silver.'
+      );
+      setActiveModule('module_5');
+      return;
+    }
+
+    if (currentStatus === 'DESCONTAMINACAO_SILVER_CIB_SPAM' && gates.silverGate.status !== 'APROVADO_PELO_ANALISTA') {
+      showToast(
+        'error',
+        'Portão Humano 2 Pendente',
+        'A Camada Silver (Descontaminação CIB/Spam) requer aprovação formal no Módulo 5 antes da Calibração Gold.'
+      );
+      setActiveModule('module_5');
+      return;
+    }
+
+    if (currentStatus === 'CALIBRACAO_RAKING_IPF_ROGAN_GLADEN' && gates.goldGate.status !== 'APROVADO_PELO_ANALISTA') {
+      showToast(
+        'error',
+        'Portão Humano 3 Pendente',
+        'A Camada Gold (Amostragem Ponderada e Calibração) requer aprovação formal no Módulo 5 antes do Boletim Final.'
+      );
+      setActiveModule('module_5');
+      return;
+    }
+
     const order = [
       { status: 'CADASTRADO_AGUARDANDO_DISPARO', pct: 0, label: 'Cadastrado / Aguardando Disparo' },
       { status: 'VALIDANDO_SESSOES_CONECTORES', pct: 15, label: 'Validando Sessões dos Conectores' },
@@ -102,6 +154,15 @@ export function DataSenadoApp() {
     const idx = order.findIndex((s) => s.status === currentStatus);
     const nextIdx = idx >= 0 && idx < order.length - 1 ? idx + 1 : 0;
     const nextStep = order[nextIdx];
+
+    try {
+      await fetch(`/api/themes/${currentThemeId}/lifecycle/advance`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+    } catch {
+      // offline fallback
+    }
 
     setThemesMap((prev) => ({
       ...prev,
@@ -177,6 +238,7 @@ export function DataSenadoApp() {
   const handleCreateThemeFromDiscovery = (topicTitle: string, committee: string, queryHint: string) => {
     const baseTemplate = THEMES_DATA['pec_escala_6x1'];
     const slugId = `tema_${Date.now()}`;
+    const initialGates = normalizeHumanGates();
     const newTheme: ThemeDataset = {
       ...baseTemplate,
       id: slugId,
@@ -185,11 +247,31 @@ export function DataSenadoApp() {
       committee,
       legislativeContext: `Acompanhamento de repercussão pública, posicionamento orgânico e disputa de narrativas sobre "${topicTitle}" para subsídio técnico à ${committee}.`,
       statusTag: 'RECÉM-INICIADO · COLETA ATIVA',
+      lifecycleStatus: 'CADASTRADO_AGUARDANDO_DISPARO',
+      lifecycleProgressPercent: 0,
+      humanGates: initialGates,
+      human_gates: initialGates,
       medallion: {
         ...baseTemplate.medallion,
         queriesUsed: [queryHint],
       },
     };
+
+    try {
+      fetch('/api/themes/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: slugId,
+          title: topicTitle,
+          committee,
+          queries: [queryHint],
+        }),
+      }).catch(() => {});
+    } catch {
+      // offline fallback
+    }
+
     setThemesMap((prev) => ({
       ...prev,
       [slugId]: newTheme,
@@ -353,7 +435,10 @@ export function DataSenadoApp() {
                   )}
 
                   {activeModule === 'module_5' && (
-                    <Module5HumanValidationAndLayers dataset={currentDataset} />
+                    <Module5HumanValidationAndLayers
+                      dataset={currentDataset}
+                      onDatasetUpdated={handleDatasetUpdated}
+                    />
                   )}
 
                   {activeModule === 'module_6' && (

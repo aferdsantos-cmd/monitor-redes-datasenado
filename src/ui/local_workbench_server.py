@@ -34,9 +34,8 @@ from typing import Any, Dict, Optional
 import urllib.parse
 from http.server import HTTPServer, ThreadingHTTPServer, BaseHTTPRequestHandler
 
-# Garante chave efêmera em memória caso ausente no ambiente
-if not os.environ.get("LGPD_HMAC_SECRET_KEY") or len(os.environ.get("LGPD_HMAC_SECRET_KEY", "").strip()) < 32:
-    os.environ["LGPD_HMAC_SECRET_KEY"] = secrets.token_hex(32)
+# Nota de Segurança Fail-Closed: Não injeta mais chave no escopo global do módulo (Achado Crítico #5).
+# Em modo de execução de servidor ou CLI launcher, main() chama ensure_ephemeral_dev_key() se necessário.
 
 from src.ui.workbench_api_and_contracts import (
     DataSenadoWorkbenchBackendBridge,
@@ -49,6 +48,7 @@ class WorkbenchAPIRequestHandler(BaseHTTPRequestHandler):
     """Handler HTTP com suporte a JSON REST e CORS para a Bancada Analítica."""
 
     bridge: Optional[DataSenadoWorkbenchBackendBridge] = None
+    MAX_BODY_BYTES: int = 65536
 
     def log_message(self, format: str, *args: Any) -> None:
         """Suprime logs excessivos para manter stdout limpo e seguro contra vazamento de PII."""
@@ -60,6 +60,9 @@ class WorkbenchAPIRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With")
         self.send_header("Access-Control-Max-Age", "86400")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
 
     def _send_json(self, data: Any, status: int = 200) -> None:
         payload = json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8")
@@ -71,6 +74,8 @@ class WorkbenchAPIRequestHandler(BaseHTTPRequestHandler):
         self.wfile.write(payload)
 
     def _send_error_json(self, message: str, status: int = 400, details: Optional[Dict[str, Any]] = None) -> None:
+        if "64KB" in message or "excede o limite" in message:
+            status = 413
         err = {"error": message, "status": "ERROR"}
         if details:
             err["details"] = details
@@ -91,7 +96,11 @@ class WorkbenchAPIRequestHandler(BaseHTTPRequestHandler):
         content_length = int(self.headers.get("Content-Length", 0))
         if content_length == 0:
             return {}
+        if content_length > self.MAX_BODY_BYTES:
+            raise ValueError(f"Payload excede o limite máximo permitido de {self.MAX_BODY_BYTES} bytes (AppSec DoS Protection).")
         raw = self.rfile.read(content_length).decode("utf-8")
+        if re.search(r'["\'](?:__proto__|constructor|prototype)["\']\s*:', raw):
+            raise ValueError("Violação AppSec: Tentativa de poluição de protótipo detectada.")
         try:
             return json.loads(raw)
         except json.JSONDecodeError as e:
@@ -169,7 +178,13 @@ class WorkbenchAPIRequestHandler(BaseHTTPRequestHandler):
                 self.wfile.write(docx_bytes)
                 return
 
-            # 5. Dossiê Completo de um Tema (ThemeDataset)
+            # 5. Tratado Metodológico Completo (Módulo 6)
+            if path in ["/api/methodology/treatise", "/api/methodology"]:
+                treatise = bridge.get_methodology_treatise_payload()
+                self._send_json(treatise)
+                return
+
+            # 6. Dossiê Completo de um Tema (ThemeDataset)
             match_theme = re.match(r"^/api/themes/([a-zA-Z0-9_-]+)$", path)
             if match_theme:
                 theme_id = match_theme.group(1)
@@ -200,6 +215,8 @@ class WorkbenchAPIRequestHandler(BaseHTTPRequestHandler):
         except ValueError as ve:
             self._send_error_json(str(ve), status=400)
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             self._send_error_json(f"Erro interno no servidor: {e}", status=500)
 
     def do_POST(self) -> None:
@@ -216,8 +233,8 @@ class WorkbenchAPIRequestHandler(BaseHTTPRequestHandler):
                 self._send_json(res, status=201)
                 return
 
-            # 2. Avanço de Ciclo de Vida do Tema
-            match_advance = re.match(r"^/api/themes/([a-zA-Z0-9_-]+)/lifecycle/advance$", path)
+            # 2. Avanço de Ciclo de Vida do Tema (suporta /lifecycle/advance e /advance-lifecycle)
+            match_advance = re.match(r"^/api/themes/([a-zA-Z0-9_-]+)/(?:lifecycle/advance|advance-lifecycle)$", path)
             if match_advance:
                 theme_id = match_advance.group(1)
                 target_state = body.get("target_state")
@@ -297,7 +314,9 @@ class LocalWorkbenchServer:
         self._thread: Optional[threading.Thread] = None
 
     def start(self, daemon: bool = True) -> None:
-        """Inicia o servidor HTTP em background."""
+        """Inicia o servidor HTTP em background garantindo chave efêmera se ausente."""
+        ensure_ephemeral_dev_key()
+        ThreadingHTTPServer.allow_reuse_address = True
         self.httpd = ThreadingHTTPServer((self.host, self.port), WorkbenchAPIRequestHandler)
         self._thread = threading.Thread(target=self.httpd.serve_forever, daemon=daemon)
         self._thread.start()
@@ -320,7 +339,18 @@ class LocalWorkbenchServer:
         self.stop()
 
 
+def ensure_ephemeral_dev_key() -> str:
+    """Garante chave efêmera em memória caso ausente no ambiente ao rodar servidor standalone."""
+    current = os.environ.get("LGPD_HMAC_SECRET_KEY", "")
+    if not current or len(current.strip()) < 32:
+        key = secrets.token_hex(32)
+        os.environ["LGPD_HMAC_SECRET_KEY"] = key
+        return key
+    return current
+
+
 def main() -> None:
+    ensure_ephemeral_dev_key()
     parser = argparse.ArgumentParser(description="Servidor REST Local DataSenado Bancada 360")
     parser.add_argument("--host", default="127.0.0.1", help="Endereço de escuta (padrão 127.0.0.1)")
     parser.add_argument("--port", type=int, default=8765, help="Porta TCP do servidor (padrão 8765)")

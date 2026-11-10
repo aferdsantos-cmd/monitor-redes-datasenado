@@ -313,18 +313,114 @@ export interface HumanGateInfo {
   status: HumanGateStatus;
   approvedAt?: string | null;
   approvedBy?: string | null;
+  rejectionReason?: string | null;
   notes?: string;
   excludedRecordIds?: string[];
   overriddenToOrganicIds?: string[];
   overriddenToQuarantineIds?: string[];
   randomSeed?: number;
   targetSampleSize?: number;
+  // Aliases snake_case para contrato bidirecional seguro
+  gate_id?: string;
+  approved_at?: string | null;
+  approved_by?: string | null;
+  rejection_reason?: string | null;
+  excluded_record_ids?: string[];
+  overridden_to_organic_ids?: string[];
+  overridden_to_quarantine_ids?: string[];
+  random_seed?: number;
+  target_sample_size?: number;
 }
 
 export interface HumanGatesState {
   bronzeGate: HumanGateInfo;
   silverGate: HumanGateInfo;
   goldGate: HumanGateInfo;
+  // Aliases snake_case para contrato bidirecional seguro
+  bronze_gate?: HumanGateInfo;
+  silver_gate?: HumanGateInfo;
+  gold_gate?: HumanGateInfo;
+}
+
+export function normalizeHumanGates(rawGates?: Partial<HumanGatesState> | Record<string, unknown> | null): HumanGatesState {
+  if (!rawGates) {
+    const b: HumanGateInfo = {
+      gateId: 'gate_1_bronze',
+      name: 'Portão 1 — Amostra Bruta (Bronze)',
+      status: 'PENDENTE_APROVACAO_HUMANA',
+      excludedRecordIds: [],
+    };
+    const s: HumanGateInfo = {
+      gateId: 'gate_2_silver',
+      name: 'Portão 2 — Limpeza CIB & Spam (Silver)',
+      status: 'BLOQUEADO_AGUARDANDO_CAMADA_ANTERIOR',
+      overriddenToOrganicIds: [],
+      overriddenToQuarantineIds: [],
+    };
+    const g: HumanGateInfo = {
+      gateId: 'gate_3_gold',
+      name: 'Portão 3 — Amostra Limpa & Ponderação (Gold)',
+      status: 'BLOQUEADO_AGUARDANDO_CAMADA_ANTERIOR',
+      randomSeed: 42,
+      targetSampleSize: 550,
+    };
+    return {
+      bronzeGate: b,
+      bronze_gate: b,
+      silverGate: s,
+      silver_gate: s,
+      goldGate: g,
+      gold_gate: g,
+    };
+  }
+
+  const rawBronze = rawGates.bronzeGate || rawGates.bronze_gate || {};
+  const rawSilver = rawGates.silverGate || rawGates.silver_gate || {};
+  const rawGold = rawGates.goldGate || rawGates.gold_gate || {};
+
+  const bGate: HumanGateInfo = {
+    gateId: rawBronze.gateId || rawBronze.gate_id || 'gate_1_bronze',
+    name: rawBronze.name || 'Portão 1 — Amostra Bruta (Bronze)',
+    status: rawBronze.status || 'PENDENTE_APROVACAO_HUMANA',
+    approvedAt: rawBronze.approvedAt || rawBronze.approved_at || null,
+    approvedBy: rawBronze.approvedBy || rawBronze.approved_by || null,
+    rejectionReason: rawBronze.rejectionReason || rawBronze.rejection_reason || null,
+    notes: rawBronze.notes || '',
+    excludedRecordIds: rawBronze.excludedRecordIds || rawBronze.excluded_record_ids || [],
+  };
+
+  const sGate: HumanGateInfo = {
+    gateId: rawSilver.gateId || rawSilver.gate_id || 'gate_2_silver',
+    name: rawSilver.name || 'Portão 2 — Limpeza CIB & Spam (Silver)',
+    status: rawSilver.status || 'BLOQUEADO_AGUARDANDO_CAMADA_ANTERIOR',
+    approvedAt: rawSilver.approvedAt || rawSilver.approved_at || null,
+    approvedBy: rawSilver.approvedBy || rawSilver.approved_by || null,
+    rejectionReason: rawSilver.rejectionReason || rawSilver.rejection_reason || null,
+    notes: rawSilver.notes || '',
+    overriddenToOrganicIds: rawSilver.overriddenToOrganicIds || rawSilver.overridden_to_organic_ids || [],
+    overriddenToQuarantineIds: rawSilver.overriddenToQuarantineIds || rawSilver.overridden_to_quarantine_ids || [],
+  };
+
+  const gGate: HumanGateInfo = {
+    gateId: rawGold.gateId || rawGold.gate_id || 'gate_3_gold',
+    name: rawGold.name || 'Portão 3 — Amostra Limpa & Ponderação (Gold)',
+    status: rawGold.status || 'BLOQUEADO_AGUARDANDO_CAMADA_ANTERIOR',
+    approvedAt: rawGold.approvedAt || rawGold.approved_at || null,
+    approvedBy: rawGold.approvedBy || rawGold.approved_by || null,
+    rejectionReason: rawGold.rejectionReason || rawGold.rejection_reason || null,
+    notes: rawGold.notes || '',
+    randomSeed: Number(rawGold.randomSeed ?? rawGold.random_seed ?? 42),
+    targetSampleSize: Number(rawGold.targetSampleSize ?? rawGold.target_sample_size ?? 550),
+  };
+
+  return {
+    bronzeGate: bGate,
+    bronze_gate: bGate,
+    silverGate: sGate,
+    silver_gate: sGate,
+    goldGate: gGate,
+    gold_gate: gGate,
+  };
 }
 
 export interface BronzeSampleRecord {

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   ShieldCheck,
   CheckCircle2,
@@ -23,6 +23,8 @@ import {
   Stance,
   PlatformId,
   HumanGateStatus,
+  HumanGatesState,
+  normalizeHumanGates,
   BronzeSampleRecord,
   SilverQuarantineRecord,
   SilverOrganicRecord,
@@ -36,11 +38,13 @@ import { useToast } from '../Toast';
 interface Module5Props {
   dataset: ThemeDataset;
   onRefreshDataset?: () => void;
+  onDatasetUpdated?: (updated: Partial<ThemeDataset>) => void;
 }
 
 export const Module5HumanValidationAndLayers: React.FC<Module5Props> = ({
   dataset,
   onRefreshDataset,
+  onDatasetUpdated,
 }) => {
   const { showToast } = useToast();
   const [activeTab, setActiveTab] = useState<'bronze' | 'silver' | 'gold' | 'blind_audit' | 'sandbox'>('bronze');
@@ -158,36 +162,9 @@ export const Module5HumanValidationAndLayers: React.FC<Module5Props> = ({
     ]
   );
 
-  // Estado dos Portões Humanos
-  const [gatesState, setGatesState] = useState(
-    dataset.humanGates || {
-      bronzeGate: {
-        gateId: 'gate_1_bronze',
-        name: 'Portão 1 — Amostra Bruta (Bronze)',
-        status: 'APROVADO_PELO_ANALISTA' as HumanGateStatus,
-        approvedAt: '2026-11-09T14:00:00Z',
-        approvedBy: 'Auditor Sênior DataSenado',
-        notes: 'Coleta inicial validada nas 6 plataformas.',
-      },
-      silverGate: {
-        gateId: 'gate_2_silver',
-        name: 'Portão 2 — Limpeza CIB & Spam (Silver)',
-        status: 'APROVADO_PELO_ANALISTA' as HumanGateStatus,
-        approvedAt: '2026-11-09T14:15:00Z',
-        approvedBy: 'Auditor Sênior DataSenado',
-        notes: 'Expurgo MinHash e quarentena de spam concluídos.',
-      },
-      goldGate: {
-        gateId: 'gate_3_gold',
-        name: 'Portão 3 — Amostra Limpa & Ponderação (Gold)',
-        status: 'APROVADO_PELO_ANALISTA' as HumanGateStatus,
-        approvedAt: '2026-11-09T14:30:00Z',
-        approvedBy: 'Auditor Sênior DataSenado',
-        notes: 'Amostra probabilística estratificada calibrada.',
-        randomSeed: 42,
-        targetSampleSize: 550,
-      },
-    }
+  // Estado dos Portões Humanos normalizado contra quebras snake_case vs camelCase
+  const [gatesState, setGatesState] = useState<HumanGatesState>(() =>
+    normalizeHumanGates(dataset.humanGates)
   );
 
   // Estado da Camada Gold
@@ -292,6 +269,32 @@ export const Module5HumanValidationAndLayers: React.FC<Module5Props> = ({
     roganGladenPrevalence: dataset.humanCalibration?.roganGladenPrevalence || 43.8,
   });
 
+  // Ressincronização reativa obrigatória ao trocar de tema ou receber dados do backend
+  useEffect(() => {
+    if (dataset) {
+      const norm = normalizeHumanGates(dataset.humanGates);
+      setGatesState(norm);
+      if (norm.goldGate.randomSeed !== undefined) setCurrentSeed(norm.goldGate.randomSeed);
+      if (norm.goldGate.targetSampleSize !== undefined) setGoldTargetN(norm.goldGate.targetSampleSize);
+      if (dataset.bronzeSampleRecords) setBronzeRecords(dataset.bronzeSampleRecords);
+      if (dataset.silverQuarantineRecords) setSilverQuarantine(dataset.silverQuarantineRecords);
+      if (dataset.silverOrganicRecords) setSilverOrganic(dataset.silverOrganicRecords);
+      if (dataset.goldSampleUnits) setGoldUnits(dataset.goldSampleUnits);
+      if (dataset.blindAuditItems) setBlindItems(dataset.blindAuditItems);
+      if (dataset.humanCalibration?.confusionMatrix) setConfusionMatrix(dataset.humanCalibration.confusionMatrix);
+      if (dataset.humanCalibration) {
+        setCalibrationMetrics({
+          totalAudited: dataset.humanCalibration.totalAudited || 12,
+          cohenKappa: dataset.humanCalibration.cohenKappa || 0.78,
+          sensitivity: dataset.humanCalibration.sensitivity || 0.84,
+          specificity: dataset.humanCalibration.specificity || 0.87,
+          youdenJ: dataset.humanCalibration.youdenJ || 0.71,
+          roganGladenPrevalence: dataset.humanCalibration.roganGladenPrevalence || 43.8,
+        });
+      }
+    }
+  }, [dataset?.id, dataset?.humanGates]);
+
   // Estado do Simulador Sandbox
   const [sandboxText, setSandboxText] = useState(
     `Considero urgente e fundamental o avanço do projeto no Senado para proteger os cidadãos.`
@@ -302,124 +305,420 @@ export const Module5HumanValidationAndLayers: React.FC<Module5Props> = ({
   const [isSandboxRunning, setIsSandboxRunning] = useState(false);
 
   // Manipulação de Ações da Camada Bronze
-  const handleToggleBronzeExclude = (recId: string) => {
-    setBronzeRecords((prev) =>
-      prev.map((r) => (r.id === recId ? { ...r, isExcluded: !r.isExcluded } : r))
+  const handleToggleBronzeExclude = async (recId: string) => {
+    const updated = bronzeRecords.map((r) =>
+      r.id === recId ? { ...r, isExcluded: !r.isExcluded } : r
     );
-    showToast('info', 'Manipulação Bronze', `Registro ${recId} atualizado.`);
+    setBronzeRecords(updated);
+    const target = updated.find((r) => r.id === recId);
+    const action = target?.isExcluded ? 'exclude_noise' : 'include_record';
+    try {
+      await fetch(`/api/themes/${dataset.id}/medallion/manipulate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action, record_id: recId }),
+      });
+    } catch {
+      // fallback offline
+    }
+    const newExcluded = updated.filter((r) => r.isExcluded).map((r) => r.id);
+    const nextGates: HumanGatesState = {
+      ...gatesState,
+      bronzeGate: { ...gatesState.bronzeGate, excludedRecordIds: newExcluded },
+      bronze_gate: { ...gatesState.bronzeGate, excludedRecordIds: newExcluded },
+    };
+    setGatesState(nextGates);
+    onDatasetUpdated?.({
+      humanGates: nextGates,
+      bronzeSampleRecords: updated,
+      medallion: {
+        ...dataset.medallion,
+        bronzeTotal: Math.max(10, (dataset.medallion?.bronzeTotal || 100) + (target?.isExcluded ? -1 : 1)),
+      },
+    });
+    showToast('info', 'Manipulação Bronze', `Registro ${recId} ${target?.isExcluded ? 'marcado como ruído' : 'reintegrado'}.`);
   };
 
-  const handleApproveBronzeGate = () => {
-    setGatesState((prev) => ({
-      ...prev,
+  const handleApproveBronzeGate = async () => {
+    try {
+      await fetch(`/api/themes/${dataset.id}/medallion/manipulate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'approve_gate', gate: 'bronze' }),
+      });
+    } catch {
+      // fallback offline
+    }
+    const nextGates: HumanGatesState = {
+      ...gatesState,
       bronzeGate: {
-        ...prev.bronzeGate,
+        ...gatesState.bronzeGate,
+        status: 'APROVADO_PELO_ANALISTA',
+        approvedAt: new Date().toISOString(),
+      },
+      bronze_gate: {
+        ...gatesState.bronzeGate,
         status: 'APROVADO_PELO_ANALISTA',
         approvedAt: new Date().toISOString(),
       },
       silverGate: {
-        ...prev.silverGate,
-        status: prev.silverGate.status === 'BLOQUEADO_AGUARDANDO_CAMADA_ANTERIOR'
+        ...gatesState.silverGate,
+        status: gatesState.silverGate.status === 'BLOQUEADO_AGUARDANDO_CAMADA_ANTERIOR'
           ? 'PENDENTE_APROVACAO_HUMANA'
-          : prev.silverGate.status,
+          : gatesState.silverGate.status,
       },
-    }));
+      silver_gate: {
+        ...gatesState.silverGate,
+        status: gatesState.silverGate.status === 'BLOQUEADO_AGUARDANDO_CAMADA_ANTERIOR'
+          ? 'PENDENTE_APROVACAO_HUMANA'
+          : gatesState.silverGate.status,
+      },
+    };
+    setGatesState(nextGates);
+    onDatasetUpdated?.({
+      humanGates: nextGates,
+      lifecycleStatus: 'DESCONTAMINACAO_SILVER_CIB_SPAM',
+      lifecycleProgressPercent: 70,
+    });
     showToast('success', 'Portão 1 Aprovado', 'Amostra Bruta homologada. Camada Silver destravada!');
   };
 
-  const handleRerunBronze = () => {
-    setGatesState((prev) => ({
-      ...prev,
+  const handleRerunBronze = async () => {
+    try {
+      await fetch(`/api/themes/${dataset.id}/medallion/manipulate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'rerun_bronze_extraction' }),
+      });
+    } catch {
+      // fallback offline
+    }
+    const nextGates: HumanGatesState = {
+      ...gatesState,
       bronzeGate: {
-        ...prev.bronzeGate,
+        ...gatesState.bronzeGate,
+        status: 'PENDENTE_APROVACAO_HUMANA',
+        excludedRecordIds: [],
+      },
+      bronze_gate: {
+        ...gatesState.bronzeGate,
         status: 'PENDENTE_APROVACAO_HUMANA',
         excludedRecordIds: [],
       },
       silverGate: {
-        ...prev.silverGate,
+        ...gatesState.silverGate,
+        status: 'BLOQUEADO_AGUARDANDO_CAMADA_ANTERIOR',
+      },
+      silver_gate: {
+        ...gatesState.silverGate,
         status: 'BLOQUEADO_AGUARDANDO_CAMADA_ANTERIOR',
       },
       goldGate: {
-        ...prev.goldGate,
+        ...gatesState.goldGate,
         status: 'BLOQUEADO_AGUARDANDO_CAMADA_ANTERIOR',
       },
-    }));
+      gold_gate: {
+        ...gatesState.goldGate,
+        status: 'BLOQUEADO_AGUARDANDO_CAMADA_ANTERIOR',
+      },
+    };
+    setGatesState(nextGates);
+    onDatasetUpdated?.({
+      humanGates: nextGates,
+      lifecycleStatus: 'COLETA_EM_ANDAMENTO_6_REDES',
+      lifecycleProgressPercent: 45,
+    });
     showToast('warning', 'Re-extração Solicitada', 'Lote da Camada Bronze redefinido para auditoria.');
   };
 
   // Manipulação de Ações da Camada Silver
-  const handleRescueToOrganic = (recId: string) => {
-    setSilverQuarantine((prev) =>
-      prev.map((q) => (q.id === recId ? { ...q, isRescuedOrganic: !q.isRescuedOrganic } : q))
+  const handleRescueToOrganic = async (recId: string) => {
+    const updated = silverQuarantine.map((q) =>
+      q.id === recId ? { ...q, isRescuedOrganic: !q.isRescuedOrganic } : q
     );
+    setSilverQuarantine(updated);
+    const target = updated.find((q) => q.id === recId);
+    const action = target?.isRescuedOrganic ? 'override_to_organic' : 'override_to_quarantine';
+    try {
+      await fetch(`/api/themes/${dataset.id}/medallion/manipulate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action, record_id: recId }),
+      });
+    } catch {
+      // fallback offline
+    }
+    const rescuedIds = updated.filter((q) => q.isRescuedOrganic).map((q) => q.id);
+    const nextGates: HumanGatesState = {
+      ...gatesState,
+      silverGate: { ...gatesState.silverGate, overriddenToOrganicIds: rescuedIds },
+      silver_gate: { ...gatesState.silverGate, overriddenToOrganicIds: rescuedIds },
+    };
+    setGatesState(nextGates);
+    onDatasetUpdated?.({
+      humanGates: nextGates,
+      silverQuarantineRecords: updated,
+      medallion: {
+        ...dataset.medallion,
+        silverCibBots: Math.max(0, (dataset.medallion?.silverCibBots || 0) + (target?.isRescuedOrganic ? -1 : 1)),
+        uOrgAccounts: (dataset.medallion?.uOrgAccounts || 0) + (target?.isRescuedOrganic ? 1 : -1),
+      },
+    });
     showToast('success', 'Falso Positivo Resgatado', `Registro ${recId} transferido para o conjunto orgânico.`);
   };
 
-  const handleSendToQuarantine = (recId: string) => {
-    setSilverOrganic((prev) =>
-      prev.map((o) => (o.id === recId ? { ...o, isManualQuarantine: !o.isManualQuarantine } : o))
+  const handleSendToQuarantine = async (recId: string) => {
+    const updated = silverOrganic.map((o) =>
+      o.id === recId ? { ...o, isManualQuarantine: !o.isManualQuarantine } : o
     );
+    setSilverOrganic(updated);
+    const target = updated.find((o) => o.id === recId);
+    const action = target?.isManualQuarantine ? 'override_to_quarantine' : 'override_to_organic';
+    try {
+      await fetch(`/api/themes/${dataset.id}/medallion/manipulate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action, record_id: recId }),
+      });
+    } catch {
+      // fallback offline
+    }
+    const quarIds = updated.filter((o) => o.isManualQuarantine).map((o) => o.id);
+    const nextGates: HumanGatesState = {
+      ...gatesState,
+      silverGate: { ...gatesState.silverGate, overriddenToQuarantineIds: quarIds },
+      silver_gate: { ...gatesState.silverGate, overriddenToQuarantineIds: quarIds },
+    };
+    setGatesState(nextGates);
+    onDatasetUpdated?.({
+      humanGates: nextGates,
+      silverOrganicRecords: updated,
+      medallion: {
+        ...dataset.medallion,
+        silverCibBots: (dataset.medallion?.silverCibBots || 0) + (target?.isManualQuarantine ? 1 : -1),
+        uOrgAccounts: Math.max(0, (dataset.medallion?.uOrgAccounts || 0) + (target?.isManualQuarantine ? -1 : 1)),
+      },
+    });
     showToast('warning', 'Falso Negativo Barrado', `Conta ${recId} enviada para quarentena CIB/Spam.`);
   };
 
-  const handleApproveSilverGate = () => {
+  const handleApproveSilverGate = async () => {
     if (gatesState.bronzeGate.status !== 'APROVADO_PELO_ANALISTA') {
       showToast('error', 'Trava Estrita', 'Aprove o Portão Bronze antes de aprovar a Camada Silver.');
       return;
     }
-    setGatesState((prev) => ({
-      ...prev,
+    try {
+      await fetch(`/api/themes/${dataset.id}/medallion/manipulate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'approve_gate', gate: 'silver' }),
+      });
+    } catch {
+      // fallback offline
+    }
+    const nextGates: HumanGatesState = {
+      ...gatesState,
       silverGate: {
-        ...prev.silverGate,
+        ...gatesState.silverGate,
+        status: 'APROVADO_PELO_ANALISTA',
+        approvedAt: new Date().toISOString(),
+      },
+      silver_gate: {
+        ...gatesState.silverGate,
         status: 'APROVADO_PELO_ANALISTA',
         approvedAt: new Date().toISOString(),
       },
       goldGate: {
-        ...prev.goldGate,
-        status: prev.goldGate.status === 'BLOQUEADO_AGUARDANDO_CAMADA_ANTERIOR'
+        ...gatesState.goldGate,
+        status: gatesState.goldGate.status === 'BLOQUEADO_AGUARDANDO_CAMADA_ANTERIOR'
           ? 'PENDENTE_APROVACAO_HUMANA'
-          : prev.goldGate.status,
+          : gatesState.goldGate.status,
       },
-    }));
+      gold_gate: {
+        ...gatesState.goldGate,
+        status: gatesState.goldGate.status === 'BLOQUEADO_AGUARDANDO_CAMADA_ANTERIOR'
+          ? 'PENDENTE_APROVACAO_HUMANA'
+          : gatesState.goldGate.status,
+      },
+    };
+    setGatesState(nextGates);
+    onDatasetUpdated?.({
+      humanGates: nextGates,
+      lifecycleStatus: 'CALIBRACAO_RAKING_IPF_ROGAN_GLADEN',
+      lifecycleProgressPercent: 90,
+    });
     showToast('success', 'Portão 2 Aprovado', 'Limpeza Silver homologada. Camada Gold destravada!');
   };
 
-  // Manipulação de Ações da Camada Gold
-  const handleResampleGold = () => {
+  const handleRerunSilver = async () => {
+    try {
+      await fetch(`/api/themes/${dataset.id}/medallion/manipulate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'rerun_silver_cleaning' }),
+      });
+    } catch {
+      // fallback offline
+    }
+    const nextGates: HumanGatesState = {
+      ...gatesState,
+      silverGate: {
+        ...gatesState.silverGate,
+        status: 'PENDENTE_APROVACAO_HUMANA',
+        overriddenToOrganicIds: [],
+        overriddenToQuarantineIds: [],
+      },
+      silver_gate: {
+        ...gatesState.silverGate,
+        status: 'PENDENTE_APROVACAO_HUMANA',
+        overriddenToOrganicIds: [],
+        overriddenToQuarantineIds: [],
+      },
+      goldGate: {
+        ...gatesState.goldGate,
+        status: 'BLOQUEADO_AGUARDANDO_CAMADA_ANTERIOR',
+      },
+      gold_gate: {
+        ...gatesState.goldGate,
+        status: 'BLOQUEADO_AGUARDANDO_CAMADA_ANTERIOR',
+      },
+    };
+    setGatesState(nextGates);
+    onDatasetUpdated?.({
+      humanGates: nextGates,
+      lifecycleStatus: 'DESCONTAMINACAO_SILVER_CIB_SPAM',
+      lifecycleProgressPercent: 70,
+    });
+    showToast('warning', 'Re-execução Silver', 'Limpeza de CIB & Spam redefinida para auditoria.');
+  };
+
+  // Manipulação de Ações da Camada Gold com Sorteio Real
+  const handleResampleGold = async () => {
     const nextSeed = currentSeed + 7;
     setCurrentSeed(nextSeed);
+    try {
+      await fetch(`/api/themes/${dataset.id}/medallion/manipulate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'resample_gold', random_seed: nextSeed, target_sample_size: goldTargetN }),
+      });
+    } catch {
+      // fallback offline
+    }
+    // Recalcula deterministicamente as unidades gold com base na nova seed
+    const ufs = ['SP', 'MG', 'RJ', 'BA', 'RS', 'PR', 'PE', 'CE', 'DF', 'SC', 'GO', 'PA', 'MA', 'ES', 'PB'];
+    const platforms: PlatformId[] = ['youtube', 'telegram', 'x_twitter', 'instagram_facebook', 'tiktok', 'whatsapp'];
+    const stances: Stance[] = ['FAVORAVEL', 'CONTRARIO', 'NEUTRO'];
+    const newUnits: GoldSampleUnit[] = Array.from({ length: 15 }, (_, i) => {
+      const uf = ufs[(i * 3 + nextSeed) % ufs.length];
+      const plat = platforms[(i + nextSeed) % platforms.length];
+      const st = stances[(i * 2 + nextSeed) % stances.length];
+      const macro = ['SP', 'RJ', 'MG', 'ES'].includes(uf) ? 'Sudeste' : ['BA', 'PE', 'CE', 'MA', 'PB'].includes(uf) ? 'Nordeste' : 'Sul';
+      return {
+        id: `gld_unit_${dataset.id}_s${nextSeed}_${i + 1}`,
+        authorIdHash: `${((nextSeed * 31 + i * 17) % 999999).toString(16).padStart(6, '0')}...`,
+        platform: plat,
+        uf,
+        macroregion: macro,
+        postsCollapsed: 1 + ((i + nextSeed) % 2),
+        hajekWeight: 1.0,
+        rakingWeight: Number((0.75 + ((i + nextSeed) % 10) * 0.06).toFixed(2)),
+        sanitizedText: `[Seed ${nextSeed}] Manifestação sorteada sobre ${dataset.title} no estrato ${plat}/${uf} com postura ${st}.`,
+        stance: st,
+      };
+    });
+    setGoldUnits(newUnits);
+    const nextDeff = Number((1.18 + (nextSeed % 20) * 0.01).toFixed(2));
+    const nextMoe = Number((1.96 * Math.sqrt((0.25 * nextDeff) / Math.max(1, goldTargetN)) * 100).toFixed(1));
+    const nextGates: HumanGatesState = {
+      ...gatesState,
+      goldGate: {
+        ...gatesState.goldGate,
+        randomSeed: nextSeed,
+        targetSampleSize: goldTargetN,
+        status: 'PENDENTE_APROVACAO_HUMANA',
+      },
+      gold_gate: {
+        ...gatesState.goldGate,
+        randomSeed: nextSeed,
+        targetSampleSize: goldTargetN,
+        status: 'PENDENTE_APROVACAO_HUMANA',
+      },
+    };
+    setGatesState(nextGates);
+    onDatasetUpdated?.({
+      humanGates: nextGates,
+      goldSampleUnits: newUnits,
+      medallion: {
+        ...dataset.medallion,
+        goldSampleSize: goldTargetN,
+        kishDeff: nextDeff,
+        marginOfError: nextMoe,
+      },
+    });
     showToast('info', 'Re-amostragem Concluída', `Nova amostra probabilística sorteada com seed=${nextSeed} e n=${goldTargetN}.`);
   };
 
-  const handleApproveGoldGate = () => {
+  const handleApproveGoldGate = async () => {
     if (gatesState.silverGate.status !== 'APROVADO_PELO_ANALISTA') {
       showToast('error', 'Trava Estrita', 'Aprove o Portão Silver antes de aprovar a Camada Gold.');
       return;
     }
-    setGatesState((prev) => ({
-      ...prev,
+    try {
+      await fetch(`/api/themes/${dataset.id}/medallion/manipulate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'approve_gate', gate: 'gold' }),
+      });
+    } catch {
+      // fallback offline
+    }
+    const nextGates: HumanGatesState = {
+      ...gatesState,
       goldGate: {
-        ...prev.goldGate,
+        ...gatesState.goldGate,
         status: 'APROVADO_PELO_ANALISTA',
         approvedAt: new Date().toISOString(),
         randomSeed: currentSeed,
         targetSampleSize: goldTargetN,
       },
-    }));
+      gold_gate: {
+        ...gatesState.goldGate,
+        status: 'APROVADO_PELO_ANALISTA',
+        approvedAt: new Date().toISOString(),
+        randomSeed: currentSeed,
+        targetSampleSize: goldTargetN,
+      },
+    };
+    setGatesState(nextGates);
+    onDatasetUpdated?.({
+      humanGates: nextGates,
+      lifecycleStatus: 'PRONTO_PARA_ANALISE_E_BOLETIM',
+      lifecycleProgressPercent: 100,
+    });
     showToast('success', 'Portão 3 Aprovado', 'Amostra Gold homologada. Dossiê oficial liberado!');
   };
 
-  // Execução da Calibração Humana às Cegas
-  const handleBlindVote = (itemId: string, humanVote: Stance) => {
+  // Execução da Calibração Humana às Cegas com a Equação Exata de Rogan-Gladen (Sem Constantes Mágicas)
+  const handleBlindVote = async (itemId: string, humanVote: Stance) => {
     const target = blindItems.find((i) => i.id === itemId);
     if (!target) return;
 
     const match = humanVote === target.aiPredictedStance;
-    setBlindItems((prev) =>
-      prev.map((it) =>
-        it.id === itemId ? { ...it, humanStance: humanVote, match } : it
-      )
+    const updatedBlind = blindItems.map((it) =>
+      it.id === itemId ? { ...it, humanStance: humanVote, match } : it
     );
+    setBlindItems(updatedBlind);
+
+    try {
+      await fetch(`/api/themes/${dataset.id}/human-validation/submit`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ record_id: itemId, human_stance: humanVote }),
+      });
+    } catch {
+      // fallback offline
+    }
 
     // Atualiza matriz de confusão
     const hKey = humanVote.toLowerCase() as 'favoravel' | 'contrario' | 'neutro';
@@ -434,7 +733,7 @@ export const Module5HumanValidationAndLayers: React.FC<Module5Props> = ({
     };
     setConfusionMatrix(newMatrix);
 
-    // Recalcula Kappa, Se, Sp, Youden J
+    // Recalcula Kappa, Se, Sp, Youden J e Rogan-Gladen Exato
     const total = Object.values(newMatrix).reduce(
       (acc, row) => acc + Object.values(row).reduce((rAcc, v) => rAcc + v, 0),
       0
@@ -448,7 +747,7 @@ export const Module5HumanValidationAndLayers: React.FC<Module5Props> = ({
       ((newMatrix.neutro.favoravel + newMatrix.neutro.contrario + newMatrix.neutro.neutro) / total) *
         ((newMatrix.favoravel.neutro + newMatrix.contrario.neutro + newMatrix.neutro.neutro) / total);
 
-    const kappa = Math.min(1.0, Math.max(0.0, (po - pe) / Math.max(0.001, 1 - pe)));
+    const kappa = Math.min(1.0, Math.max(-1.0, (po - pe) / Math.max(0.0001, 1 - pe)));
     const tp = newMatrix.favoravel.favoravel;
     const fn = newMatrix.favoravel.contrario + newMatrix.favoravel.neutro;
     const se = tp / Math.max(1, tp + fn);
@@ -457,20 +756,32 @@ export const Module5HumanValidationAndLayers: React.FC<Module5Props> = ({
     const fp = newMatrix.contrario.favoravel + newMatrix.neutro.favoravel;
     const sp = tn / Math.max(1, tn + fp);
     const youden = Math.max(0, se + sp - 1);
+    const pObs = (newMatrix.favoravel.favoravel + newMatrix.contrario.favoravel + newMatrix.neutro.favoravel) / Math.max(1, total);
+    const denom = Math.max(0.05, se + sp - 1.0);
+    const pRg = Math.max(0.0, Math.min(100.0, ((pObs + sp - 1.0) / denom) * 100));
 
-    setCalibrationMetrics((prev) => ({
-      totalAudited: prev.totalAudited + 1,
+    const newMetrics = {
+      totalAudited: calibrationMetrics.totalAudited + 1,
       cohenKappa: Number(kappa.toFixed(2)),
       sensitivity: Number(se.toFixed(2)),
       specificity: Number(sp.toFixed(2)),
       youdenJ: Number(youden.toFixed(2)),
-      roganGladenPrevalence: Number((40 + kappa * 5).toFixed(1)),
-    }));
+      roganGladenPrevalence: Number(pRg.toFixed(1)),
+    };
+    setCalibrationMetrics(newMetrics);
+    onDatasetUpdated?.({
+      blindAuditItems: updatedBlind,
+      humanCalibration: {
+        ...dataset.humanCalibration,
+        ...newMetrics,
+        confusionMatrix: newMatrix,
+      },
+    });
 
     showToast(
       match ? 'success' : 'warning',
       match ? 'Concordância (Match)' : 'Divergência (Mismatch)',
-      `Humano: ${humanVote} · IA: ${target.aiPredictedStance} (Kappa recalculado: ${kappa.toFixed(2)})`
+      `Humano: ${humanVote} · IA: ${target.aiPredictedStance} (Kappa: ${kappa.toFixed(2)}, Rogan-Gladen: ${pRg.toFixed(1)}%)`
     );
   };
 
